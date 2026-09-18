@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="Bank.API/Bank.API.csproj" />
+  <Project Path="Bank.DAL/Bank.DAL.csproj" />
+  <Project Path="Bank.Repo/Bank.Repo.csproj" />
+  <Project Path="Bank.Services/Bank.Services.csproj" />
+  <Project Path="Bank.Shared/Bank.Shared.csproj" />
+</Solution>

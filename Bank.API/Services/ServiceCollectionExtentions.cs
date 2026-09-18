@@ -1,0 +1,195 @@
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Bank.API.Filters;
+using Bank.DAL.Context;
+using Bank.Repo.Implementations;
+using Bank.Repo.Interfaces;
+using Bank.Services.AssemblyMarker;
+using Bank.Services.Interfaces;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json.Serialization;
+using Bank.Services.Implementations;
+using Hangfire;
+using Hangfire.SqlServer;
+using Bank.Services.HangFireJobs;
+namespace Bank.API.Services
+{
+    public static class ServiceCollectionExtentions
+    {
+        public static IServiceCollection AddApplicationServices(this IServiceCollection services,IConfiguration configuration)
+        {
+            services.AddDatabase(configuration);
+            services.AddInfrastructureServices(configuration);
+            services.AddSwaggerWithJWT();
+            services.AddAuthenticationWithJWT(configuration);
+            services.AddAPIBehavior(configuration);
+            return services;
+           
+        }
+        public static IServiceCollection AddDatabase(this IServiceCollection services,IConfiguration configuration)
+        {
+            var connectionString = configuration.GetConnectionString("DefaultConnection");
+            services
+                 .AddDbContext<AppDbContext>(op => op
+                 //.UseLazyLoadingProxies(true)
+                 .UseSqlServer(connectionString,
+                  sqlServerOptions => sqlServerOptions.UseNetTopologySuite()));
+
+            services.AddHangfire(configuration => configuration
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UseSqlServerStorage(connectionString, new SqlServerStorageOptions
+                {
+                    CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                    SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                    QueuePollInterval = TimeSpan.Zero,
+                    UseRecommendedIsolationLevel = true,
+                    DisableGlobalLocks = true
+                }));
+
+            //services.AddHangfireServer(options =>
+            //{
+            //    options.Queues = new[] { "bulk-import", "default" };
+            //    options.WorkerCount = 2; 
+            //});
+            services.AddHangfireServer(options =>
+            {
+               
+                options.Queues = new[] { "default", "bulk-import", "recording-processing" };
+                options.WorkerCount = 4;
+            });
+            services.AddScoped<DataFileImportJob>();
+            return services;
+        }
+        public static IServiceCollection AddInfrastructureServices(this IServiceCollection services,IConfiguration configuration)
+        {
+          
+            services.AddFluentValidationAutoValidation();
+            services.AddValidatorsFromAssemblyContaining<ApplicationAssemblyMarker>();
+            services.AddAutoMapper(au => { },typeof(ApplicationAssemblyMarker).Assembly);
+            services.AddScoped<IUnitOfWork, UnitOfWork>();
+            services.AddScoped<IUserService, UserService>();
+            services.AddScoped<IJWTService, JWTService>();
+            services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IFileStorageService, LocalFileStorageService>();
+            services.AddScoped<IDataFileService, DataFileService>();
+            services.AddScoped<IAdminService, AdminService>();
+            services.AddScoped<ISuperAdminService, SuperAdminService>();
+            services.AddScoped<IReferralJobService, ReferralJobService>();
+            services.AddScoped<ICheckFileService, CheckFileService>();
+            services.AddScoped<IPlateColumnDetector, PlateColumnDetector>();
+            services.AddScoped<ICheckPlateCacheService, CheckPlateCacheService>();
+            services.AddScoped<ILookupService, LookupService>();
+            services.AddScoped<DataFileImportJob>();
+            services.AddScoped<ReferralMatchingJob>();
+            services.AddScoped<IRecordingSessionService, RecordingSessionService>();
+            services.AddHttpClient<IAiTranscriptionService, AiTranscriptionService>();
+
+
+
+            return services;
+        }
+        public static IServiceCollection AddAPIBehavior(this IServiceCollection services,IConfiguration configuration)
+        {
+            services.AddControllers(x =>
+            {
+                x.Filters.Add<ErrorFilter>();
+                x.Filters.Add<ResponseWrapperFilter>();
+            }).AddJsonOptions(op =>
+            {
+                op.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+            });
+            services.AddOpenApi();
+            services.AddEndpointsApiExplorer();
+            return services;
+        }
+        public static IServiceCollection AddSwaggerWithJWT(this IServiceCollection services)
+        {
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo
+                {
+                    Title = "Bank API",
+                    Version = "v1",
+                    Description = "Bank API with JWT Authentication"
+                });
+
+                // Include XML Comments
+                var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+                var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+                if (File.Exists(xmlPath))
+                {
+                    c.IncludeXmlComments(xmlPath);
+                }
+
+                // JWT Authentication Scheme
+                c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                {
+                    Name = "Authorization",
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "Bearer",
+                    BearerFormat = "JWT",
+                    In = ParameterLocation.Header,
+                    Description = "Enter your JWT token"
+                });
+
+                // Security Requirement (OpenAPI v2 style)
+                c.AddSecurityRequirement(document =>
+                {
+                    return new OpenApiSecurityRequirement
+                    {
+                        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
+                    };
+                });
+            });
+
+            return services;
+        }
+
+        public static IServiceCollection AddAuthenticationWithJWT(this IServiceCollection services, IConfiguration configuration)
+        {
+            var key = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(configuration["Auth:JWT:Key"]
+                    ?? throw new InvalidOperationException("JWT Key is missing")));
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme =
+                    JwtBearerDefaults.AuthenticationScheme;
+
+                options.DefaultChallengeScheme =
+                    JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = key,
+
+                    ValidateIssuer = false,
+                   // ValidIssuer = configuration["Auth:JWT:Issuer"],
+
+                    ValidateAudience = false,
+                   // ValidAudience = configuration["Auth:JWT:Audience"],
+
+                    ValidateLifetime = false,
+                   // ClockSkew = TimeSpan.Zero
+                };
+            });
+
+
+            return services;
+        }
+
+    }
+}
+
