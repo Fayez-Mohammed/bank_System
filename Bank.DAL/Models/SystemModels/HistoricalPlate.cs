@@ -21,5 +21,7 @@ public class HistoricalPlate : BaseEntityLong
     public string? Location { get; set; }
     //public DateTime? RecordedAt { get; set; }
     public string? RecordedAt { get; set; }
+    public string? Notes { get; set; }
+    public string? RecorderName { get; set; }
     public ICollection<MatchResult> MatchResults { get; set; } = new List<MatchResult>();
 }

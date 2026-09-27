@@ -1,4 +1,5 @@
 using Bank.API.Filters;
+using Bank.API.Hubs;
 using Bank.API.MiddleWare;
 using Bank.API.Services;
 using Bank.DAL.Context;
@@ -102,6 +103,7 @@ namespace Bank
             {
                 Authorization = new[] { new HangfireAuthorizationFilter() }
             });
+            app.MapHub<LiveCheckHub>("/hubs/live-check");
 
             app.MapControllers();
 

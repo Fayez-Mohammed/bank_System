@@ -94,7 +94,13 @@ namespace Bank.API.Services
             services.AddScoped<IRecordingSessionService, RecordingSessionService>();
             services.AddHttpClient<IAiTranscriptionService, AiTranscriptionService>();
 
+            services.AddSignalR();
 
+            services.AddSingleton<ILiveCheckConnectionManager,LiveCheckConnectionManager>();
+
+            services.AddScoped<ILiveCheckAiConnector,WebSocketLiveCheckAiConnector>();
+
+            services.AddScoped<ILiveCheckSessionService,LiveCheckSessionService>();
 
             return services;
         }
@@ -183,6 +189,21 @@ namespace Bank.API.Services
 
                     ValidateLifetime = false,
                    // ClockSkew = TimeSpan.Zero
+                };
+                options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+
+                        if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+
+                        return Task.CompletedTask;
+                    }
                 };
             });
 

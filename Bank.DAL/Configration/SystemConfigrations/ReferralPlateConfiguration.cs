@@ -23,7 +23,9 @@ public class ReferralPlateConfiguration : BaseEntityLongConfiguration<ReferralPl
             .HasConversion<string>()
             .HasMaxLength(20)
             .IsRequired();
-
+        builder.Property(x => x.ExtraDataJson)
+        .HasColumnName("extra_data_json")
+        .HasColumnType("nvarchar(max)");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
 
        

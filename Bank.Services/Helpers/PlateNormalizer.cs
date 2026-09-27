@@ -3,9 +3,30 @@ using System.Text.RegularExpressions;
 
 namespace Bank.Services.HangFireJobs;
 
-
 public static class PlateNormalizer
 {
+    
+    private static readonly Dictionary<char, char> EnglishToArabicPlateLetters = new()
+    {
+        ['A'] = 'ا',
+        ['B'] = 'ب',
+        ['Z'] = 'م',
+        ['R'] = 'ر',
+        ['D'] = 'د',
+        ['V'] = 'ي',
+        ['J'] = 'ح',
+        ['E'] = 'ع',
+        ['K'] = 'ك',
+        ['G'] = 'ق',
+        ['X'] = 'ص',
+        ['U'] = 'و',
+        ['L'] = 'ل',
+        ['T'] = 'ط',
+        ['S'] = 'س',
+        ['N'] = 'ن',
+        ['H'] = 'ه'
+    };
+
     public static string Normalize(string? input)
     {
         if (string.IsNullOrWhiteSpace(input)) return string.Empty;
@@ -20,9 +41,6 @@ public static class PlateNormalizer
                 continue;
             }
 
-     
-
-           
             var mappedChar = ch switch
             {
                 'أ' or 'إ' or 'آ' or 'ٱ' => 'ا',
@@ -30,8 +48,13 @@ public static class PlateNormalizer
                 'ى' => 'ي',
                 'ؤ' => 'و',
                 'ئ' => 'ي',
-                _ => char.ToUpperInvariant(ch) 
+                _ => char.ToUpperInvariant(ch)
             };
+
+            if (EnglishToArabicPlateLetters.TryGetValue(mappedChar, out var arabicEquivalent))
+            {
+                mappedChar = arabicEquivalent;
+            }
 
             sb.Append(mappedChar);
         }
@@ -39,12 +62,12 @@ public static class PlateNormalizer
         return sb.ToString().Trim();
     }
 
-    //public static string Normalize(string rawPlate)
-    //{
-    //    if (string.IsNullOrWhiteSpace(rawPlate)) return string.Empty;
-    //    return rawPlate.Replace(" ", "").Trim().ToUpperInvariant();
-    //}
+    private static readonly Regex ReferralPlatePattern =
+     new(@"^([A-Za-z\u0621-\u064A]+)([0-9]*)$", RegexOptions.Compiled);
 
+ 
+    private static readonly Regex ReversedReferralPlatePattern =
+        new(@"^([0-9]+)([A-Za-z\u0621-\u064A]+)$", RegexOptions.Compiled);
 
     public static string NormalizeReferralPlate(string rawPlate)
     {
@@ -53,24 +76,40 @@ public static class PlateNormalizer
         var cleaned = rawPlate.Replace(" ", "").Replace("-", "").Trim().ToUpperInvariant();
         cleaned = ConvertArabicIndicDigitsToWestern(cleaned);
 
+        string letters;
+        string digits;
+
         var match = ReferralPlatePattern.Match(cleaned);
-        if (!match.Success)
+        if (match.Success)
         {
-       
-            return cleaned;
+            letters = match.Groups[1].Value;
+            digits = match.Groups[2].Value;
+        }
+        else
+        {
+            var reversedMatch = ReversedReferralPlatePattern.Match(cleaned);
+            if (reversedMatch.Success)
+            {
+                digits = reversedMatch.Groups[1].Value;
+                letters = reversedMatch.Groups[2].Value;
+            }
+            else
+            {
+                return cleaned;
+            }
         }
 
-        var letters = match.Groups[1].Value;
-        var digits = match.Groups[2].Value;
+        var mappedLetters = new StringBuilder(letters.Length);
+        foreach (var ch in letters)
+        {
+            mappedLetters.Append(EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar) ? arabicChar : ch);
+        }
 
-       
         var paddedDigits = digits.Length >= 4 ? digits : digits.PadLeft(4, '0');
 
-        return letters + paddedDigits;
+        return mappedLetters.ToString() + paddedDigits;
     }
-
-    private static readonly Regex ReferralPlatePattern =
-        new(@"^([A-Za-z\u0621-\u064A]+)([0-9]*)$", RegexOptions.Compiled);
+   
 
     private static string ConvertArabicIndicDigitsToWestern(string input)
     {

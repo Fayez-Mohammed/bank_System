@@ -305,6 +305,99 @@ namespace Bank.DAL.Migrations
                     b.ToTable("check_plates", (string)null);
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.CheckSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<Guid?>("CheckFileId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("check_file_id");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("nvarchar(180)")
+                        .HasColumnName("display_name");
+
+                    b.Property<string>("District")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("district");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ended_at");
+
+                    b.Property<string>("ExcelSheetName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("excel_sheet_name");
+
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("group_id");
+
+                    b.Property<string>("ProcessingError")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("processing_error");
+
+                    b.Property<DateTime>("StartedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("started_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Recording")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Street")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("street");
+
+                    b.Property<int>("TotalPlates")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("total_plates");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CheckFileId");
+
+                    b.HasIndex("GroupId", "DisplayName")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CheckSessions_DisplayName_PerGroup")
+                        .HasFilter("[group_id] IS NOT NULL");
+
+                    b.HasIndex("GroupId", "StartedAt");
+
+                    b.HasIndex("UserId", "DisplayName")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CheckSessions_DisplayName_PerSoloUser")
+                        .HasFilter("[group_id] IS NULL");
+
+                    b.HasIndex("UserId", "StartedAt");
+
+                    b.ToTable("check_sessions", (string)null);
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.DataFile", b =>
                 {
                     b.Property<Guid>("Id")
@@ -475,6 +568,11 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("nvarchar(30)")
                         .HasColumnName("normalized_plate");
 
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("notes");
+
                     b.Property<string>("RawPlate")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -485,6 +583,11 @@ namespace Bank.DAL.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)")
                         .HasColumnName("recorded_at");
+
+                    b.Property<string>("RecorderName")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("recorder_name");
 
                     b.Property<string>("Street")
                         .HasMaxLength(150)
@@ -520,6 +623,10 @@ namespace Bank.DAL.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<Guid>("CheckSessionId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("check_session_id");
+
                     b.Property<string>("CheckType")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -549,8 +656,9 @@ namespace Bank.DAL.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("is_matched");
 
-                    b.Property<Point>("Location")
-                        .HasColumnType("geography")
+                    b.Property<string>("Location")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
                         .HasColumnName("location");
 
                     b.Property<long?>("MatchedCheckPlateId")
@@ -578,19 +686,24 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("user_id");
 
+                    b.Property<string>("VehicleType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("vehicle_type");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("GroupId");
+
+                    b.HasIndex("IsMatched");
 
                     b.HasIndex("MatchedCheckPlateId");
 
                     b.HasIndex("NormalizedPlate");
 
-                    b.HasIndex("GroupId", "CheckedAt")
-                        .HasDatabaseName("IX_LiveCheckLogs_GroupId_CheckedAt_MatchedOnly")
-                        .HasFilter("[is_matched] = 1 AND [group_id] IS NOT NULL");
+                    b.HasIndex("CheckSessionId", "CheckedAt");
 
-                    b.HasIndex("UserId", "CheckedAt")
-                        .HasDatabaseName("IX_LiveCheckLogs_UserId_CheckedAt_MatchedOnly")
-                        .HasFilter("[is_matched] = 1 AND [group_id] IS NULL");
+                    b.HasIndex("UserId", "CheckedAt");
 
                     b.ToTable("live_check_logs", (string)null);
                 });
@@ -1021,6 +1134,14 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("password_hash");
 
+                    b.Property<string>("ReferralColumnsJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("referral_columns_json");
+
+                    b.Property<string>("SelectedHistoricalColumnsJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("selected_historical_columns_json");
+
                     b.Property<int>("SkippedPlatesCount")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int")
@@ -1079,6 +1200,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("ExtraDataJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("extra_data_json");
 
                     b.Property<string>("NormalizedPlate")
                         .IsRequired()
@@ -1406,6 +1531,31 @@ namespace Bank.DAL.Migrations
                     b.Navigation("CheckFile");
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.CheckSession", b =>
+                {
+                    b.HasOne("Bank.DAL.Models.SystemModels.CheckFile", "CheckFile")
+                        .WithMany()
+                        .HasForeignKey("CheckFileId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Bank.DAL.Models.SystemModels.Group", "Group")
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Bank.DAL.Models.BaseModels.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CheckFile");
+
+                    b.Navigation("Group");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.DataFile", b =>
                 {
                     b.HasOne("Bank.DAL.Models.SystemModels.Group", "Group")
@@ -1461,6 +1611,12 @@ namespace Bank.DAL.Migrations
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.LiveCheckLog", b =>
                 {
+                    b.HasOne("Bank.DAL.Models.SystemModels.CheckSession", "CheckSession")
+                        .WithMany("Logs")
+                        .HasForeignKey("CheckSessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("Bank.DAL.Models.SystemModels.Group", "Group")
                         .WithMany("LiveCheckLogs")
                         .HasForeignKey("GroupId")
@@ -1476,6 +1632,8 @@ namespace Bank.DAL.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("CheckSession");
 
                     b.Navigation("Group");
 
@@ -1729,6 +1887,11 @@ namespace Bank.DAL.Migrations
                     b.Navigation("MatchedLiveCheckLogs");
 
                     b.Navigation("MatchedRecordedPlates");
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.CheckSession", b =>
+                {
+                    b.Navigation("Logs");
                 });
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.DataFile", b =>

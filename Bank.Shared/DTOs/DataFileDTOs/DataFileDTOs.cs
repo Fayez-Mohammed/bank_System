@@ -5,6 +5,23 @@ using System.Text;
 
 namespace Bank.Shared.DTOs.DataFileDTOs
 {
+    public class UpdateHistoricalPlateDto
+    {
+        public string RawPlate { get; set; } = null!;
+        public string? VehicleType { get; set; }
+        public string? District { get; set; }
+        public string? Street { get; set; }
+        public string? Location { get; set; }
+        public string? RecordedAt { get; set; }
+        public string? Notes { get; set; }
+        public string? RecorderName { get; set; }
+    }
+
+    public record UpdateHistoricalPlateResponseDto(
+        long HistoricalPlateId,
+        string NormalizedPlate,
+        int SyncedMatchResultsCount);
+
     public record DataFileImportStatusDto(
     Guid Id,
     string Status,          // Pending | Processing | Completed | Failed

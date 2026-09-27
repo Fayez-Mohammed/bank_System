@@ -29,6 +29,10 @@ public class HistoricalPlateConfiguration : BaseEntityLongConfiguration<Historic
             .HasMaxLength(500)
             .IsRequired(false); ;
 
+        builder.Property(x => x.Notes).HasColumnName("notes").HasMaxLength(500);
+        builder.Property(x => x.RecorderName).HasColumnName("recorder_name").HasMaxLength(150);
+
+
         builder.HasIndex(x => x.NormalizedPlate);
         builder.HasIndex(x => new { x.DataFileId, x.NormalizedPlate });
         builder.HasIndex(x => x.UserId);

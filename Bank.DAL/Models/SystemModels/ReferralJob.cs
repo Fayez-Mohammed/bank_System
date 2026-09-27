@@ -23,6 +23,9 @@ public class ReferralJob : BaseEntity
     public int MatchedPlatesCount { get; set; }
 
     public JobStatus Status { get; set; } = JobStatus.Processing;
+    public string? SelectedHistoricalColumnsJson { get; set; }
+
+    public string? ReferralColumnsJson { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

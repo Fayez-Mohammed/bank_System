@@ -42,6 +42,13 @@ public class ReferralJobConfiguration : BaseEntityConfiguration<ReferralJob>
             .HasMaxLength(30)
             .HasDefaultValue(JobStatus.Processing)
             .IsRequired();
+        builder.Property(x => x.SelectedHistoricalColumnsJson)
+           .HasColumnName("selected_historical_columns_json")
+           .HasColumnType("nvarchar(max)");
+
+        builder.Property(x => x.ReferralColumnsJson)
+            .HasColumnName("referral_columns_json")
+            .HasColumnType("nvarchar(max)");
 
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
 

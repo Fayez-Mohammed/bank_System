@@ -27,6 +27,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     public DbSet<MatchResult> MatchResults => Set<MatchResult>();
     public DbSet<ReferralPlate> ReferralPlates => Set<ReferralPlate>();
     public DbSet<RecordingGpsPoint> RecordingGpsPoints => Set<RecordingGpsPoint>(); 
+    public DbSet<CheckSession> CheckSessions => Set<CheckSession>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
