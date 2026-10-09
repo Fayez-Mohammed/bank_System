@@ -1,3 +1,4 @@
+
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -154,6 +155,11 @@ public class AiTranscriptionService : IAiTranscriptionService
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
         [property: JsonPropertyName("notes")] string? Notes);
 }
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+
 
 //using System.Net.Http.Headers;
 //using System.Text.Json;

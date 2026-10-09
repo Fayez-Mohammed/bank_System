@@ -12,6 +12,8 @@ namespace Bank.Shared.DTOs.RecordingSessionDTOs;
 //    public bool IsMatched { get; set; }
 //    public string? VehicleType { get; set; }
 //}
+public record RecordingSessionStatusDto(
+    Guid Id, SessionStatus Status, int TotalPlates, int MatchedCount, string? ProcessingError);
 public class CreateManualCheckRequestDto
 {
     public string District { get; set; } = null!;
@@ -22,7 +24,7 @@ public class CreateManualCheckRequestDto
     public string PlateNumber { get; set; } = null!;
 
     public string? VehicleType { get; set; }
-
+    public string RecorderName { get; set; } = null!;
     public double Latitude { get; set; }
     public double Longitude { get; set; }
 }
@@ -34,6 +36,7 @@ public class CreateRecordingSessionRequestDto
     public string District { get; set; } = null!;
     public string Street { get; set; } = null!;
     public string ExcelSheetName { get; set; } = null!;
+    public string RecorderName { get; set; } = null!;
     public TrackingMode TrackingMode { get; set; } = TrackingMode.Auto;
     public int TrackingIntervalSeconds { get; set; } = 3;
 }
@@ -56,6 +59,7 @@ public record RecordingSessionSummaryDto(
     int TotalPlates,
     int MatchedCount,
     int UnmatchedCount,
+    bool IsRecord,
     DateTime StartedAt);
 
 public record RecordingSessionDetailDto(
@@ -71,7 +75,9 @@ public record RecordingSessionDetailDto(
     int TotalGpsPoints,
     int TotalPlates,
     DateTime StartedAt,
-    DateTime? EndedAt);
+    DateTime? EndedAt,
+    bool IsRecord,
+    string? RecorderName);
 
 // ⭐ الجدول بالظبط زي الصورة: رقم اللوحة / ملاحظات / نوع السيارة / الشارع / الحي / التاريخ + isMatched + رابط الموقع
 public record RecordedPlateRowDto(
@@ -83,7 +89,10 @@ public record RecordedPlateRowDto(
     string? District,
     DateTime RecordedAt,
     string? LocationLink,   // ⭐ رابط، مش lat/lng
-    bool IsMatched);
+    string? RecorderName,
+    bool IsMatched,
+    string? BankName,
+    string? VehicleTypeInCheckFile);
 
 public class AppendToDataFileRequestDto
 {

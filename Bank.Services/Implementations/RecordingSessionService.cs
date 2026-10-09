@@ -5,6 +5,7 @@ using Bank.Services.HangFireJobs;
 using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
+using Bank.Shared.DTOs.RecordingArchiveDTOs;
 using Bank.Shared.DTOs.RecordingSessionDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
@@ -27,18 +28,40 @@ public class RecordingSessionService : IRecordingSessionService
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IRecordingArchiveService _archiveService;
 
     public RecordingSessionService(
         ILogger<RecordingSessionService> logger, IUnitOfWork unit, AppDbContext dbContext,
-        IFileStorageService fileStorage, IBackgroundJobClient backgroundJobClient)
+        IFileStorageService fileStorage, IBackgroundJobClient backgroundJobClient,
+        IRecordingArchiveService archiveService)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
         _fileStorage = fileStorage;
         _backgroundJobClient = backgroundJobClient;
+        _archiveService = archiveService;
+    }
+    public async Task<ApiResponse<RecordingSessionStatusDto>> GetStatusAsync(
+        Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
+        if (userScope is null) return ApiResponse<RecordingSessionStatusDto>.Fail("المستخدم غير موجود.");
+
+        var status = await _dbContext.RecordingSessions
+            .AsNoTracking()
+            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .Select(s => new RecordingSessionStatusDto(
+                s.Id, s.Status, s.TotalPlates, s.RecordedPlates.Count(p => p.IsMatched), s.ProcessingError))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return status is null
+            ? ApiResponse<RecordingSessionStatusDto>.Fail("التسجيل غير موجود.", null, 404)
+            : ApiResponse<RecordingSessionStatusDto>.SuccessResponse(status);
     }
 
+
+  
     public async Task<ApiResponse<CreateRecordingSessionResponseDto>> CreateAsync(
         Guid userId, CreateRecordingSessionRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -62,10 +85,11 @@ public class RecordingSessionService : IRecordingSessionService
             CheckFileId = activeCheckFileId,
             District = request.District,
             Street = request.Street,
-            ExcelSheetName = request.ExcelSheetName,
+            ExcelSheetName = request.ExcelSheetName??$"{request.Street}_{DateTime.UtcNow:yyyyMMdd}",
             DisplayName = displayName,
             TrackingMode = request.TrackingMode,
             TrackingIntervalSeconds = request.TrackingIntervalSeconds,
+            RecorderName = request.RecorderName,
             Status = SessionStatus.Recording,
             StartedAt = DateTime.UtcNow
         };
@@ -166,7 +190,12 @@ public class RecordingSessionService : IRecordingSessionService
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
         if (session.AudioUrl is null) return ApiResponse<bool>.Fail("مفيش صوت مرفوع أصلاً لإعادة المعالجة.", null, 400);
-        if (session.Status != SessionStatus.Failed) return ApiResponse<bool>.Fail("إعادة المحاولة متاحة بس للتسجيلات الفاشلة.", null, 400);
+
+       
+        if (session.Status == SessionStatus.Processing)
+        {
+            return ApiResponse<bool>.Fail("التسجيل لسه بيتعالج دلوقتي.", null, 409);
+        }
 
         await _dbContext.RecordedPlates.Where(p => p.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken);
 
@@ -176,7 +205,51 @@ public class RecordingSessionService : IRecordingSessionService
 
         _backgroundJobClient.Enqueue<RecordingProcessingJob>(job => job.ProcessAsync(sessionId, CancellationToken.None));
 
+        _logger.LogInformation("RecordingSession {SessionId} re-queued for processing by user {UserId}", sessionId, currentUserId);
         return ApiResponse<bool>.SuccessResponse(true, "جاري إعادة المعالجة.");
+    }
+
+
+    public async Task<ApiResponse<bool>> UpdateAsync(
+        Guid sessionId, Guid currentUserId, UpdateRecordingSessionRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
+        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
+
+        var session = await _dbContext.RecordingSessions
+            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
+
+        if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
+
+        if (session.Status == SessionStatus.Processing)
+        {
+            return ApiResponse<bool>.Fail("مينفعش تعدّل بيانات تسجيل لسه بيتعالج — استنى لحد ما يخلص الأول.", null, 409);
+        }
+
+        var districtChanged = request.District is not null && request.District != session.District;
+        var streetChanged = request.Street is not null && request.Street != session.Street;
+
+        if (!districtChanged && !streetChanged)
+        {
+            return ApiResponse<bool>.SuccessResponse(true, "مفيش تغيير.");
+        }
+
+        if (request.District is not null) session.District = request.District;
+        if (request.Street is not null) session.Street = request.Street;
+
+        await _dbContext.RecordedPlates
+            .Where(p => p.SessionId == sessionId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(p => p.District, session.District)
+                .SetProperty(p => p.Street, session.Street),
+                cancellationToken);
+
+        await _unit.CompleteAsync();
+
+        _logger.LogInformation(
+            "RecordingSession {SessionId} district/street updated by user {UserId}", sessionId, currentUserId);
+
+        return ApiResponse<bool>.SuccessResponse(true);
     }
 
     public async Task<ApiResponse<List<RecordingSessionSummaryDto>>> GetAllAsync(
@@ -201,6 +274,7 @@ public class RecordingSessionService : IRecordingSessionService
                 s.TotalPlates,
                 s.StartedAt,
                 s.EndedAt,
+                s.IsRecord,
                 MatchedCount = s.RecordedPlates.Count(p => p.IsMatched)
             })
             .ToListAsync(cancellationToken);
@@ -208,7 +282,7 @@ public class RecordingSessionService : IRecordingSessionService
         var items = sessions.Select(s => new RecordingSessionSummaryDto(
             s.Id, s.DisplayName, s.Status,
             s.EndedAt.HasValue ? (int)(s.EndedAt.Value - s.StartedAt).TotalSeconds : null,
-            s.TotalGpsPoints, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.StartedAt))
+            s.TotalGpsPoints, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount,s.IsRecord, s.StartedAt))
             .ToList();
 
         return ApiResponse<List<RecordingSessionSummaryDto>>.SuccessResponse(items);
@@ -225,7 +299,7 @@ public class RecordingSessionService : IRecordingSessionService
             .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
             .Select(s => new RecordingSessionDetailDto(
                 s.Id, s.DisplayName, s.District, s.Street, s.ExcelSheetName, s.TrackingMode, s.TrackingIntervalSeconds,
-                s.Status, s.ProcessingError, s.TotalGpsPoints, s.TotalPlates, s.StartedAt, s.EndedAt))
+                s.Status, s.ProcessingError, s.TotalGpsPoints, s.TotalPlates, s.StartedAt, s.EndedAt, s.IsRecord, s.RecorderName))
             .FirstOrDefaultAsync(cancellationToken);
 
         return session is null
@@ -233,26 +307,41 @@ public class RecordingSessionService : IRecordingSessionService
             : ApiResponse<RecordingSessionDetailDto>.SuccessResponse(session);
     }
 
-    public async Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetPlatesAsync(
+    public Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetPlatesAsync(
+      Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default)
+      => GetPlatesInternalAsync(sessionId, currentUserId, page, pageSize, matchedOnly: false, cancellationToken);
+
+    public Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetMatchedPlatesAsync(
         Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default)
+        => GetPlatesInternalAsync(sessionId, currentUserId, page, pageSize, matchedOnly: true, cancellationToken);
+
+    private async Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetPlatesInternalAsync(
+        Guid sessionId, Guid currentUserId, int page, int pageSize, bool matchedOnly, CancellationToken cancellationToken)
     {
         var inScope = await EnsureSessionInScopeAsync(sessionId, currentUserId, cancellationToken);
         if (!inScope) return ApiResponse<PagedResult<RecordedPlateRowDto>>.Fail("التسجيل غير موجود.", null, 404);
 
         var query = _dbContext.RecordedPlates.AsNoTracking().Where(p => p.SessionId == sessionId);
-        var totalCount = await query.CountAsync(cancellationToken);
+        if (matchedOnly) query = query.Where(p => p.IsMatched);
 
+        var totalCount = await query.CountAsync(cancellationToken);
+        var session = await _dbContext.RecordingSessions
+            .AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.RecorderName })
+            .FirstOrDefaultAsync(cancellationToken);
         var rows = await query
             .OrderBy(p => p.SequenceNumber)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(p => new { p.Id, p.NormalizedPlate, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location, p.IsMatched })
+            .Select(p => new { p.Id, p.NormalizedPlate, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location, p.IsMatched, p.BankName, p.VehicleTypeInCheckFile })
             .ToListAsync(cancellationToken);
 
         var items = rows.Select(p => new RecordedPlateRowDto(
             p.Id, p.NormalizedPlate, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt,
-            LocationLinkHelper.ToGoogleMapsLink(p.Location), p.IsMatched))
+            LocationLinkHelper.ToGoogleMapsLink(p.Location), session.RecorderName, p.IsMatched, p.BankName, p.VehicleTypeInCheckFile))
             .ToList();
+
         var result = new PagedResult<RecordedPlateRowDto>
         {
             Items = items,
@@ -262,7 +351,6 @@ public class RecordingSessionService : IRecordingSessionService
         };
         return ApiResponse<PagedResult<RecordedPlateRowDto>>.SuccessResponse(result);
     }
-
     public async Task<(Stream Stream, string ContentType, string FileName)> GetAudioAsync(
         Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
@@ -291,7 +379,7 @@ public class RecordingSessionService : IRecordingSessionService
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
             .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
-            .Select(s => s.DisplayName)
+            .Select(s => new { s.DisplayName, s.RecorderName,s.ExcelSheetName })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null) throw new KeyNotFoundException("التسجيل غير موجود.");
@@ -300,7 +388,7 @@ public class RecordingSessionService : IRecordingSessionService
             .AsNoTracking()
             .Where(p => p.SessionId == sessionId)
             .OrderBy(p => p.SequenceNumber)
-            .Select(p => new { p.NormalizedPlate, p.IsMatched, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location })
+            .Select(p => new { p.NormalizedPlate/*, p.IsMatched*/, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location })
             .ToListAsync(cancellationToken);
 
         using var workbook = new XLWorkbook();
@@ -308,32 +396,34 @@ public class RecordingSessionService : IRecordingSessionService
         sheet.RightToLeft = true;
 
         sheet.Cell(1, 1).Value = "رقم اللوحة";
-        sheet.Cell(1, 2).Value = "الحالة";
-        sheet.Cell(1, 3).Value = "ملاحظات";
-        sheet.Cell(1, 4).Value = "نوع السيارة";
-        sheet.Cell(1, 5).Value = "الشارع";
-        sheet.Cell(1, 6).Value = "الحي";
-        sheet.Cell(1, 7).Value = "التاريخ";
-        sheet.Cell(1, 8).Value = "الموقع";
+       // sheet.Cell(1, 2).Value = "الحالة";
+        sheet.Cell(1, 2).Value = "ملاحظات";
+        sheet.Cell(1, 3).Value = "نوع السيارة";
+        sheet.Cell(1, 4).Value = "الشارع";
+        sheet.Cell(1, 5).Value = "الحي";
+        sheet.Cell(1, 6).Value = "التاريخ";
+        sheet.Cell(1, 7).Value = "الموقع";
+        sheet.Cell(1, 8).Value = "اسم المسجّل";
 
         var r = 2;
         foreach (var row in rows)
         {
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
-            sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
-            sheet.Cell(r, 3).Value = row.Notes;
-            sheet.Cell(r, 4).Value = row.VehicleType;
-            sheet.Cell(r, 5).Value = row.Street;
-            sheet.Cell(r, 6).Value = row.District;
-            sheet.Cell(r, 7).Value = row.RecordedAt;
-            sheet.Cell(r, 8).Value = LocationLinkHelper.ToGoogleMapsLink(row.Location);
+           // sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
+            sheet.Cell(r, 2).Value = row.Notes;
+            sheet.Cell(r, 3).Value = row.VehicleType;
+            sheet.Cell(r, 4).Value = row.Street;
+            sheet.Cell(r, 5).Value = row.District;
+            sheet.Cell(r, 6).Value = row.RecordedAt;
+            sheet.Cell(r, 7).Value = LocationLinkHelper.ToGoogleMapsLink(row.Location);
+            sheet.Cell(r, 8).Value = session.RecorderName;
             r++;
         }
         sheet.Columns().AdjustToContents();
 
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
-        return (stream.ToArray(), $"{session}.xlsx");
+        return (stream.ToArray(), $"{session.ExcelSheetName}.xlsx");
     }
 
     public async Task<ApiResponse<AppendToDataFileResultDto>> AppendToDataFileAsync(
@@ -348,7 +438,9 @@ public class RecordingSessionService : IRecordingSessionService
             .FirstOrDefaultAsync(cancellationToken);
 
         if (dataFile is null) return ApiResponse<AppendToDataFileResultDto>.Fail("ملف الداتا التاريخية غير موجود.", null, 404);
-
+        var session = await _dbContext.RecordingSessions
+            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .FirstOrDefaultAsync(cancellationToken);
         var query = _dbContext.RecordedPlates.AsNoTracking().Where(p => p.SessionId == sessionId);
         query = request.AppendMode switch
         {
@@ -377,7 +469,9 @@ public class RecordingSessionService : IRecordingSessionService
             District = p.District,
             Street = p.Street,
             Location = LocationLinkHelper.ToGoogleMapsLink(p.Location),
-            RecordedAt = p.RecordedAt.ToString("yyyy-MM-dd HH:mm:ss")
+            RecordedAt = p.RecordedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+            RecorderName=session.RecorderName
+           
         });
 
         await _dbContext.HistoricalPlates.AddRangeAsync(historicalPlates, cancellationToken);
@@ -465,7 +559,7 @@ public class RecordingSessionService : IRecordingSessionService
         return await _dbContext.Users
             .AsNoTracking()
             .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId))
+            .Select(u => new UserScopeInfo(u.GroupId, u.FullName))
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -476,39 +570,6 @@ public class RecordingSessionService : IRecordingSessionService
             : s => s.Id == sessionId && s.GroupId == null && s.UserId == currentUserId;
     }
 
-    //public async Task<ApiResponse<ManualCheckResponseDto>> ManualCheckPlateAsync(Guid currentUserId, ManualCheckRequestDto request, CancellationToken cancellationToken = default)
-    //{
-    //    var userScope=await ResolveUserScopeAsync(currentUserId, cancellationToken);
-    //    if(userScope is null) return ApiResponse<ManualCheckResponseDto>.Fail("المستخدم غير موجود.");
-    //    var activeCheckFileId = _dbContext.CheckFiles.AsNoTracking()
-    //        .Where(f => f.IsActive)
-    //        .Where(f => userScope.GroupId.HasValue ?
-    //        f.GroupId == userScope.GroupId.Value :
-    //        f.GroupId == null && f.UploadedBy == currentUserId)
-    //        .Select(f=>(Guid?)f.Id).FirstOrDefault();
-    //    var checkFilePlate = _dbContext.CheckPlates.AsNoTracking()
-    //        .Where(p =>p.NormalizedPlate == request.PlateNumber&&p.CheckFileId == activeCheckFileId);
-    //    var manualPlatestosaveindb = new ManualCheck
-    //    {
-    //        RawPlate = request.PlateNumber,
-    //        NormalizedPlate = request.PlateNumber,
-    //        VehicleType = checkFilePlate.Select(p => p.VehicleType).FirstOrDefault(),
-    //        IsMatched = checkFilePlate.Any(),
-    //        Street = request.Street,
-    //        District = request.District,
-    //        RecordedAt = DateTime.UtcNow,
-    //        Location = LocationLinkHelper.ToPoint(request.Latitude, request.Longitude),
-    //        SequenceNumber = await _dbContext.RecordedPlates.Where(p => p.SessionId == request.SessionId).CountAsync(cancellationToken) + 1
-    //    };
-    //    var result = checkFilePlate.Any()
-    //        ? checkFilePlate.Select(p =>new ManualCheckResponseDto{
-    //            PlateNumber = p.NormalizedPlate,
-    //            IsMatched = true,
-    //            VehicleType = p.VehicleType
-    //        }).FirstOrDefault()
-    //        : new ManualCheckResponseDto { PlateNumber = request.PlateNumber, IsMatched = false, VehicleType = null };
-    //    return ApiResponse<ManualCheckResponseDto>.SuccessResponse(result, "تمت عملية التحقق.");
-    //}
     public async Task<ApiResponse<ManualCheckResultDto>> CreateManualCheckAsync(
     Guid userId, CreateManualCheckRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -546,6 +607,8 @@ public class RecordingSessionService : IRecordingSessionService
             TotalGpsPoints = 1,
             TotalPlates = 1,
             Status = SessionStatus.Completed,
+            RecorderName = request.RecorderName,
+            IsRecord =false,
             StartedAt = now,
             EndedAt = now
         };
@@ -566,12 +629,22 @@ public class RecordingSessionService : IRecordingSessionService
         var normalized = PlateNormalizer.Normalize(request.PlateNumber);
 
         long? matchedCheckPlateId = null;
+        string? bankName = null;
+        string? vehicleTypeInCheckFile = null;
+
         if (activeCheckFileId.HasValue)
         {
-            matchedCheckPlateId = await _dbContext.CheckPlates
+           var result = await _dbContext.CheckPlates
                 .Where(cp => cp.CheckFileId == activeCheckFileId.Value && cp.NormalizedPlate == normalized)
-                .Select(cp => (long?)cp.Id)
+                .Select(cp =>new{ Id = (long?)cp.Id, BankName = cp.BankName, VehicleType = cp.VehicleType })
                 .FirstOrDefaultAsync(cancellationToken);
+            
+            if (result != null)
+            {
+                matchedCheckPlateId = result.Id;
+                bankName = result.BankName;
+                vehicleTypeInCheckFile = result.VehicleType;
+            }
         }
 
         var recordedPlate = new RecordedPlate
@@ -589,11 +662,21 @@ public class RecordingSessionService : IRecordingSessionService
             IsMatched = matchedCheckPlateId.HasValue,
             MatchedCheckPlateId = matchedCheckPlateId,
             IsManualEntry = true,
-            RecordedAt = now
+            RecordedAt = now,
+            BankName = bankName,
+            VehicleTypeInCheckFile = vehicleTypeInCheckFile
         };
 
         await _dbContext.RecordedPlates.AddAsync(recordedPlate, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // التشييك اليدوي كمان بيتسجّل في الأرشيف الدائم، زي أي تفريغ عادي.
+        var archiveEntry = new RecordingArchiveEntryInput(
+            recordedPlate.RawPlate, recordedPlate.NormalizedPlate, recordedPlate.VehicleType,
+            recordedPlate.District, recordedPlate.Street, recordedPlate.Notes,
+            LocationLinkHelper.ToGoogleMapsLink(recordedPlate.Location), recordedPlate.RecordedAt, session.RecorderName, recordedPlate.IsMatched);
+
+        await _archiveService.ReplaceSessionEntriesAsync(session.Id, userId, new List<RecordingArchiveEntryInput> { archiveEntry }, cancellationToken);
 
         _logger.LogInformation(
             "Manual check created: Session {SessionId}, Plate {Plate}, Matched={IsMatched}, by user {UserId}",
@@ -602,11 +685,11 @@ public class RecordingSessionService : IRecordingSessionService
         var plateDto = new RecordedPlateRowDto(
             recordedPlate.Id, recordedPlate.NormalizedPlate, recordedPlate.Notes, recordedPlate.VehicleType,
             recordedPlate.Street, recordedPlate.District, recordedPlate.RecordedAt,
-            LocationLinkHelper.ToGoogleMapsLink(recordedPlate.Location), recordedPlate.IsMatched);
+            LocationLinkHelper.ToGoogleMapsLink(recordedPlate.Location), session.RecorderName, recordedPlate.IsMatched, bankName, vehicleTypeInCheckFile);
 
         return ApiResponse<ManualCheckResultDto>.SuccessResponse(
             new ManualCheckResultDto(session.Id, displayName, plateDto), statusCode: 201);
     }
 
-    private record UserScopeInfo(Guid? GroupId);
+    private record UserScopeInfo(Guid? GroupId, string? FullName);
 }

@@ -20,7 +20,7 @@ public class ReferralMatchingJob
         _logger = logger;
     }
 
-    [AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     public async Task ProcessAsync(Guid referralJobId, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Referral matching job started for ReferralJob {ReferralJobId}", referralJobId);

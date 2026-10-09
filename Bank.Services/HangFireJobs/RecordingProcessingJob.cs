@@ -1,6 +1,6 @@
 using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
-using Bank.Services.HangFireJobs;
+using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Bank.Shared.Enums;
 using Hangfire;
@@ -16,18 +16,21 @@ public class RecordingProcessingJob
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
     private readonly IAiTranscriptionService _aiService;
+    private readonly IRecordingArchiveService _archiveService;
     private readonly ILogger<RecordingProcessingJob> _logger;
 
     public RecordingProcessingJob(
-        AppDbContext dbContext, IFileStorageService fileStorage, IAiTranscriptionService aiService, ILogger<RecordingProcessingJob> logger)
+        AppDbContext dbContext, IFileStorageService fileStorage, IAiTranscriptionService aiService,
+        IRecordingArchiveService archiveService, ILogger<RecordingProcessingJob> logger)
     {
         _dbContext = dbContext;
         _fileStorage = fileStorage;
         _aiService = aiService;
+        _archiveService = archiveService;
         _logger = logger;
     }
 
-    [AutomaticRetry(Attempts = 1, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     public async Task ProcessAsync(Guid sessionId, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Recording processing job started for Session {SessionId}", sessionId);
@@ -35,7 +38,7 @@ public class RecordingProcessingJob
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
             .Where(s => s.Id == sessionId)
-            .Select(s => new { s.StartedAt, s.CheckFileId, s.AudioUrl, s.UserId })
+            .Select(s => new { s.StartedAt, s.CheckFileId, s.AudioUrl, s.UserId, s.District, s.Street,s.RecorderName })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null || session.AudioUrl is null)
@@ -84,7 +87,13 @@ public class RecordingProcessingJob
                 var nearestLocation = FindNearestGpsPoint(gpsPoints, recordedAt);
 
                 var isMatched = checkPlatesLookup.TryGetValue(normalized, out var matchedCheckPlateId);
-
+               var bankNameAndVehicleTypeResult = isMatched
+                    ? await _dbContext.CheckPlates
+                        .AsNoTracking()
+                        .Where(cp => cp.Id == matchedCheckPlateId)
+                        .Select(cp => new { cp.BankName, cp.VehicleType })
+                        .FirstOrDefaultAsync(cancellationToken)
+                    : null;
                 recordedPlates.Add(new RecordedPlate
                 {
                     SessionId = sessionId,
@@ -94,12 +103,17 @@ public class RecordingProcessingJob
                     NormalizedPlate = normalized,
                     VehicleType = car.VehicleType,
                     Notes = car.Notes,
+                    
+                    District = session.District,
+                    Street = session.Street,
                     Location = nearestLocation,
                     AudioOffsetMs = effectiveOffsetMs,
                     IsMatched = isMatched,
                     MatchedCheckPlateId = isMatched ? matchedCheckPlateId : null,
                     IsManualEntry = false,
-                    RecordedAt = recordedAt
+                    RecordedAt = recordedAt,
+                    BankName = bankNameAndVehicleTypeResult?.BankName,
+                    VehicleTypeInCheckFile = bankNameAndVehicleTypeResult?.VehicleType
                 });
             }
 
@@ -116,6 +130,21 @@ public class RecordingProcessingJob
                     cancellationToken);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // نسخة دائمة من الناتج في الأرشيف — بتفضل حتى لو اليوزر مسح الـ Session
+            // أو كل التسجيلات بعد كده. أي "تفريغ تاني" لنفس الـ Session بيبدأ من جديد
+            // (ReplaceSessionEntriesAsync بتمسح نسخة الأرشيف القديمة بتاعته الأول).
+            var recorderName = session.RecorderName; //await _dbContext.Users
+            //    .AsNoTracking()
+            //    .Where(u => u.Id == session.UserId)
+            //    .Select(u => u.FullName)
+            //    .FirstOrDefaultAsync(cancellationToken);
+
+            var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
+                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District, session.Street, p.Notes,
+                LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched)).ToList();
+
+            await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);
 
             _logger.LogInformation(
                 "Recording processing completed for Session {SessionId}: {PlateCount} plates, {MatchedCount} matched",

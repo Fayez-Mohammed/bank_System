@@ -1,4 +1,5 @@
 using Bank.Shared.DTOs;
+using Bank.Shared.DTOs.RecordingArchiveDTOs;
 using Bank.Shared.DTOs.RecordingSessionDTOs;
 using Microsoft.AspNetCore.Http;
 
@@ -6,6 +7,11 @@ namespace Bank.Services.Interfaces;
 
 public interface IRecordingSessionService
 {
+    Task<ApiResponse<RecordingSessionStatusDto>> GetStatusAsync(
+     Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetMatchedPlatesAsync(
+        Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default);
     Task<ApiResponse<CreateRecordingSessionResponseDto>> CreateAsync(
         Guid userId, CreateRecordingSessionRequestDto request, CancellationToken cancellationToken = default);
 
@@ -38,6 +44,8 @@ public interface IRecordingSessionService
     Task<ApiResponse<int>> DeleteAllAsync(Guid currentUserId, CancellationToken cancellationToken = default);
     Task<ApiResponse<ManualCheckResultDto>> CreateManualCheckAsync(
     Guid userId, CreateManualCheckRequestDto request, CancellationToken cancellationToken = default);
+    Task<ApiResponse<bool>> UpdateAsync(
+    Guid sessionId, Guid currentUserId, UpdateRecordingSessionRequestDto request, CancellationToken cancellationToken = default);
     // Task<ApiResponse<ManualCheckResponseDto>> ManualCheckPlateAsync(
     //   Guid currentUserId, ManualCheckRequestDto request, CancellationToken cancellationToken = default);
 }

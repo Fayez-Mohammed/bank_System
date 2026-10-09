@@ -28,6 +28,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     public DbSet<ReferralPlate> ReferralPlates => Set<ReferralPlate>();
     public DbSet<RecordingGpsPoint> RecordingGpsPoints => Set<RecordingGpsPoint>(); 
     public DbSet<CheckSession> CheckSessions => Set<CheckSession>();
+    public DbSet<RecordingArchivePlate> RecordingArchivePlates
+    => Set<RecordingArchivePlate>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

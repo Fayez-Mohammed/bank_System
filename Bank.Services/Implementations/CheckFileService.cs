@@ -63,6 +63,12 @@ public class CheckFileService : ICheckFileService
     public async Task<ApiResponse<CheckFileSummaryDto>> UploadAsync(
         Guid uploaderId, CreateCheckFileRequestDto request, CancellationToken cancellationToken = default)
     {
+        //var canUploadDataFilePermission=await _dbContext.UserPermissions
+        //    .AnyAsync(p => p.UserId == uploaderId && p.CanUploadDataFiles , cancellationToken);
+        //if(!canUploadDataFilePermission)
+        //{
+        //    return ApiResponse<CheckFileSummaryDto>.Fail("ليس لديك صلاحية رفع ملفات التشيك.");
+        //}
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var validationError = ValidateUploadedFile(request.File);
         if (validationError is not null)

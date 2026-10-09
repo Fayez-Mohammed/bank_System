@@ -69,17 +69,64 @@ public static class PlateNormalizer
     private static readonly Regex ReversedReferralPlatePattern =
         new(@"^([0-9]+)([A-Za-z\u0621-\u064A]+)$", RegexOptions.Compiled);
 
+    //public static string NormalizeReferralPlate(string rawPlate)
+    //{
+    //    if (string.IsNullOrWhiteSpace(rawPlate)) return string.Empty;
+
+    //    var cleaned = rawPlate.Replace(" ", "").Replace("-", "").Trim().ToUpperInvariant();
+    //    cleaned = ConvertArabicIndicDigitsToWestern(cleaned);
+
+    //    string letters;
+    //    string digits;
+
+    //    var match = ReferralPlatePattern.Match(cleaned);
+    //    if (match.Success)
+    //    {
+    //        letters = match.Groups[1].Value;
+    //        digits = match.Groups[2].Value;
+    //    }
+    //    else
+    //    {
+    //        var reversedMatch = ReversedReferralPlatePattern.Match(cleaned);
+    //        if (reversedMatch.Success)
+    //        {
+    //            digits = reversedMatch.Groups[1].Value;
+    //            letters = reversedMatch.Groups[2].Value;
+    //        }
+    //        else
+    //        {
+    //            return cleaned;
+    //        }
+    //    }
+
+    //    var mappedLetters = new StringBuilder(letters.Length);
+    //    foreach (var ch in letters)
+    //    {
+    //        mappedLetters.Append(EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar) ? arabicChar : ch);
+    //    }
+
+    //    var paddedDigits = digits.Length >= 4 ? digits : digits.PadLeft(4, '0');
+
+    //    return mappedLetters.ToString() + paddedDigits;
+    //}
     public static string NormalizeReferralPlate(string rawPlate)
     {
-        if (string.IsNullOrWhiteSpace(rawPlate)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(rawPlate))
+            return string.Empty;
 
-        var cleaned = rawPlate.Replace(" ", "").Replace("-", "").Trim().ToUpperInvariant();
+        var cleaned = rawPlate
+            .Replace(" ", "")
+            .Replace("-", "")
+            .Trim()
+            .ToUpperInvariant();
+
         cleaned = ConvertArabicIndicDigitsToWestern(cleaned);
 
         string letters;
         string digits;
 
         var match = ReferralPlatePattern.Match(cleaned);
+
         if (match.Success)
         {
             letters = match.Groups[1].Value;
@@ -88,6 +135,7 @@ public static class PlateNormalizer
         else
         {
             var reversedMatch = ReversedReferralPlatePattern.Match(cleaned);
+
             if (reversedMatch.Success)
             {
                 digits = reversedMatch.Groups[1].Value;
@@ -100,16 +148,24 @@ public static class PlateNormalizer
         }
 
         var mappedLetters = new StringBuilder(letters.Length);
-        foreach (var ch in letters)
+
+        // Reverse the source letter order
+        for (var i = letters.Length - 1; i >= 0; i--)
         {
-            mappedLetters.Append(EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar) ? arabicChar : ch);
+            var ch = letters[i];
+
+            mappedLetters.Append(
+                EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar)
+                    ? arabicChar
+                    : ch);
         }
 
-        var paddedDigits = digits.Length >= 4 ? digits : digits.PadLeft(4, '0');
+        var paddedDigits = digits.Length >= 4
+            ? digits
+            : digits.PadLeft(4, '0');
 
         return mappedLetters.ToString() + paddedDigits;
     }
-   
 
     private static string ConvertArabicIndicDigitsToWestern(string input)
     {

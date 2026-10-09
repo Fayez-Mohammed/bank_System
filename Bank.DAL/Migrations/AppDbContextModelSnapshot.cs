@@ -858,6 +858,9 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("int")
                         .HasColumnName("audio_offset_ms");
 
+                    b.Property<string>("BankName")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("District")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)")
@@ -930,6 +933,9 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("vehicle_type");
 
+                    b.Property<string>("VehicleTypeInCheckFile")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("MatchedCheckPlateId");
@@ -941,6 +947,99 @@ namespace Bank.DAL.Migrations
                     b.HasIndex("SessionId", "IsMatched");
 
                     b.ToTable("recorded_plates", (string)null);
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.RecordingArchivePlate", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("AppendedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("appended_at");
+
+                    b.Property<Guid?>("AppendedToDataFileId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("appended_to_data_file_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("District")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("district");
+
+                    b.Property<bool>("IsMatched")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("location");
+
+                    b.Property<string>("NormalizedPlate")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("normalized_plate");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("RawPlate")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("raw_plate");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<string>("RecorderName")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("recorder_name");
+
+                    b.Property<Guid?>("SourceSessionId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("source_session_id");
+
+                    b.Property<string>("Street")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("street");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("VehicleType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("vehicle_type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NormalizedPlate");
+
+                    b.HasIndex("SourceSessionId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "AppendedToDataFileId");
+
+                    b.ToTable("recording_archive_plates", (string)null);
                 });
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.RecordingGpsPoint", b =>
@@ -1024,9 +1123,18 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("group_id");
 
+                    b.Property<bool>("IsRecord")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_record");
+
                     b.Property<string>("ProcessingError")
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("processing_error");
+
+                    b.Property<string>("RecorderName")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("StartedAt")
                         .ValueGeneratedOnAdd()
@@ -1716,6 +1824,17 @@ namespace Bank.DAL.Migrations
                     b.Navigation("MatchedCheckPlate");
 
                     b.Navigation("Session");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.RecordingArchivePlate", b =>
+                {
+                    b.HasOne("Bank.DAL.Models.BaseModels.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });

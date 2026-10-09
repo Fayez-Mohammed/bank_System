@@ -24,7 +24,36 @@ public class ReferralJobsController : ControllerBase
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-
+    /// <summary>
+    /// Exports a single combined Excel file from multiple referral jobs' matched results,
+    /// grouped by data file across all of them (so e.g. "مكة 2026" rows from any selected
+    /// referral job end up in the same group). Meant to be picked up by the client and shared
+    /// via the device's native share sheet (e.g. to WhatsApp).
+    /// </summary>
+    [HttpPost("export-combined")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportCombined(
+        [FromBody] ExportCombinedReferralResultsRequestDto request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (bytes, fileName) = await _referralJobService.ExportCombinedResultsAsync(
+                request.ReferralJobIds, CurrentUserId, cancellationToken);
+            return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+        }
+        catch (ArgumentException ex)
+        {
+            var response = ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status400BadRequest);
+            return StatusCode(response.StatusCode, response);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            var response = ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status404NotFound);
+            return StatusCode(response.StatusCode, response);
+        }
+    }
     /// <summary>
     /// Inspects a referral job file upload: returns each sheet's headers, row count,
     /// and suggested plate/color/vehicle-type/model columns (suggestions only — not final).

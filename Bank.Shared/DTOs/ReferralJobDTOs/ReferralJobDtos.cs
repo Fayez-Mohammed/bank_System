@@ -73,6 +73,10 @@ namespace Bank.Shared.DTOs.ReferralJobDTOs;
 // ========== Inspect (قبل الرفع الفعلي) ==========
 
 // اقتراحات السيرفر لكل شيت — المستخدم بيأكدها أو يغيّرها، مش نهائية.
+public class ExportCombinedReferralResultsRequestDto
+{
+    public List<Guid> ReferralJobIds { get; set; } = new();
+}
 public record SuggestedReferralColumnsDto(
     int? PlateColumnIndex,
     string? ColorColumnHeader,

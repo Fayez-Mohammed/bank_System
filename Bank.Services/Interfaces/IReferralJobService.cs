@@ -6,6 +6,8 @@ namespace Bank.Services.Interfaces;
 
 public interface IReferralJobService
 {
+    Task<(byte[] FileBytes, string FileName)> ExportCombinedResultsAsync(
+    List<Guid> referralJobIds, Guid currentUserId, CancellationToken cancellationToken = default);
     Task<ApiResponse<InspectReferralFileResponseDto>> InspectUploadAsync(
     IFormFile file, CancellationToken cancellationToken = default);
     Task<ApiResponse<Guid>> CreateFromUploadAsync(

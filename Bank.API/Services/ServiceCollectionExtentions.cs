@@ -91,6 +91,7 @@ namespace Bank.API.Services
             services.AddScoped<ILookupService, LookupService>();
             services.AddScoped<DataFileImportJob>();
             services.AddScoped<ReferralMatchingJob>();
+            services.AddScoped<IRecordingArchiveService, RecordingArchiveService>();
             services.AddScoped<IRecordingSessionService, RecordingSessionService>();
             services.AddHttpClient<IAiTranscriptionService, AiTranscriptionService>();
 

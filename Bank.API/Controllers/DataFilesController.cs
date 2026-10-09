@@ -92,7 +92,7 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPatch("reorder")]
-        [Authorize(Policy = "CanToggleFiles")]
+      //  [Authorize(Policy = "CanToggleFiles")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> Reorder([FromBody] ReorderDataFilesRequestDto request, CancellationToken cancellationToken)

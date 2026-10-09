@@ -11,9 +11,7 @@ public class RecordingSession : BaseEntity
     public Guid? GroupId { get; set; }
     public virtual Group? Group { get; set; }
 
-    // ⭐ جديد — snapshot لملف التشيك النشط وقت بدء التسجيل، عشان لو الأدمن
-    // فعّل ملف تاني بعد كده، المطابقة تفضل مربوطة بالملف اللي كان شغال
-    // فعليًا لحظة التسجيل، مش أي ملف يبقى نشط بعدين.
+    public bool IsRecord { get; set; } = true; 
     public Guid? CheckFileId { get; set; }
     public virtual CheckFile? CheckFile { get; set; }
 
@@ -21,9 +19,8 @@ public class RecordingSession : BaseEntity
     public string Street { get; set; } = null!;            // الشارع: 110 البيعه
     public string ExcelSheetName { get; set; } = null!;     // اسم ورقة Excel
 
-    // ⭐ جديد — "110 البيعه" / "110 البيعه (1)" / "110 البيعه (2)"...
     public string DisplayName { get; set; } = null!;
-
+    public string? RecorderName { get; set; } 
     public TrackingMode TrackingMode { get; set; } = TrackingMode.Auto;
     public int TrackingIntervalSeconds { get; set; } = 3;   // الفترة بين النقاط
 
@@ -38,7 +35,7 @@ public class RecordingSession : BaseEntity
 
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? EndedAt { get; set; }
-
+    //public DateTime? MatchesShownAt { get; set; }
     public virtual ICollection<RecordedPlate> RecordedPlates { get; set; } = new List<RecordedPlate>();
 
     // ⭐ جديد

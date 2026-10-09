@@ -9,7 +9,8 @@ using Bank.Services.AssemblyMarker;
 using Hangfire;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
-
+//using Serilog;
+//using Serilog.Events;
 namespace Bank
 {
     public class Program
@@ -17,7 +18,29 @@ namespace Bank
         public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+        //    Log.Logger = new LoggerConfiguration()
+        //.ReadFrom.Configuration(builder.Configuration)
+        //.Enrich.FromLogContext()
 
+        //.MinimumLevel.Information()
+        //.MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+        //.MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        //.MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Error)
+        //.MinimumLevel.Override("Hangfire", LogEventLevel.Warning)
+        //.WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Information)
+
+        //.WriteTo.File(
+        //    path: Path.Combine(builder.Environment.ContentRootPath, "Logs", "app-log-.txt"),
+        //    rollingInterval: RollingInterval.Day,
+        //    retainedFileCountLimit: 1,
+        //    fileSizeLimitBytes: 50 * 1024 * 1024,
+        //    rollOnFileSizeLimit: true,
+        //    shared: true,
+        //    restrictedToMinimumLevel: LogEventLevel.Information // أو اجعله LogEventLevel.Warning لو أردت فقط تحذيرات وأخطاء
+        //)
+        //.CreateLogger();
+
+        //    builder.Host.UseSerilog();
             builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
             {
                 options.Password.RequireDigit = false;
