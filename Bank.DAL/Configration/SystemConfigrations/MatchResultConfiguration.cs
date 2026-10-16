@@ -22,7 +22,7 @@ public class MatchResultConfiguration : BaseEntityLongConfiguration<MatchResult>
         builder.Property(x => x.Location).HasColumnName("location").HasMaxLength(500);
         builder.Property(x => x.FoundRecordedAt).HasColumnName("found_recorded_at").HasMaxLength(50);
         builder.Property(x => x.SourceDataFileId).HasColumnName("source_data_file_id").IsRequired();
-        builder.Property(x => x.MatchedAt).HasColumnName("matched_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.MatchedAt).HasColumnName("matched_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => new { x.ReferralJobId, x.NormalizedPlate });
         builder.HasIndex(x => x.SourceDataFileId);

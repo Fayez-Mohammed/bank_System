@@ -9,7 +9,7 @@ using Bank.Shared.DTOs.DataFileDTOs;
 using Bank.Shared.Enums;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.SqlClient;
+using Npgsql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
@@ -221,8 +221,8 @@ public class DataFileService : IDataFileService
         for (var i = 0; i < request.Items.Count; i++)
         {
             sql.Append($"WHEN @id{i} THEN @order{i} ");
-            parameters.Add(new SqlParameter($"@id{i}", request.Items[i].Id));
-            parameters.Add(new SqlParameter($"@order{i}", request.Items[i].SortOrder));
+            parameters.Add(new NpgsqlParameter($"@id{i}", request.Items[i].Id));
+            parameters.Add(new NpgsqlParameter($"@order{i}", request.Items[i].SortOrder));
         }
 
         sql.Append("ELSE sort_order END WHERE id IN (")
@@ -232,12 +232,12 @@ public class DataFileService : IDataFileService
         if (userScope.GroupId.HasValue)
         {
             sql.Append("group_id = @scopeGroupId");
-            parameters.Add(new SqlParameter("@scopeGroupId", userScope.GroupId.Value));
+            parameters.Add(new NpgsqlParameter("@scopeGroupId", userScope.GroupId.Value));
         }
         else
         {
             sql.Append("group_id IS NULL AND owner_id = @scopeUserId");
-            parameters.Add(new SqlParameter("@scopeUserId", currentUserId));
+            parameters.Add(new NpgsqlParameter("@scopeUserId", currentUserId));
         }
 
         var affected = await _dbContext.Database.ExecuteSqlRawAsync(sql.ToString(), parameters, cancellationToken);

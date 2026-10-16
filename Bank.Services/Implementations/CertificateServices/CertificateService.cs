@@ -94,7 +94,7 @@ public class CertificateService : ICertificateService
             var searchPlate = plate.Length >= 3;
 
             q = q.Where(c =>
-                c.FileName.Contains(term) ||
+                c.FileName.ToLower().Contains(term.ToLower()) ||
                 (searchPlate && c.NormalizedPlate != null && c.NormalizedPlate.Contains(plate)));
         }
 

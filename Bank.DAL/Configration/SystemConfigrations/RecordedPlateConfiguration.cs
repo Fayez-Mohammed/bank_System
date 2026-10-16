@@ -27,7 +27,7 @@ public class RecordedPlateConfiguration : BaseEntityLongConfiguration<RecordedPl
         builder.Property(x => x.IsMatched).HasColumnName("is_matched").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.MatchedCheckPlateId).HasColumnName("matched_check_plate_id");
         builder.Property(x => x.IsManualEntry).HasColumnName("is_manual_entry").HasDefaultValue(false).IsRequired();
-        builder.Property(x => x.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.NormalizedPlate);
         builder.HasIndex(x => new { x.SessionId, x.IsMatched });

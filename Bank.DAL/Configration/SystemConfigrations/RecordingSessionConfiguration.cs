@@ -33,8 +33,8 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
         builder.Property(x => x.TrackingIntervalSeconds).HasColumnName("tracking_interval_seconds").HasDefaultValue(3);
         builder.Property(x => x.TotalGpsPoints).HasColumnName("total_gps_points").HasDefaultValue(0);
         builder.Property(x => x.TotalPlates).HasColumnName("total_plates").HasDefaultValue(0);
-        builder.Property(x => x.AudioUrl).HasColumnName("audio_url").HasColumnType("nvarchar(max)");
-        builder.Property(x => x.ProcessingError).HasColumnName("processing_error").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.AudioUrl).HasColumnName("audio_url").HasColumnType("text");
+        builder.Property(x => x.ProcessingError).HasColumnName("processing_error").HasColumnType("text");
 
         builder.Property(x => x.Status)
             .HasColumnName("status")
@@ -43,7 +43,7 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
             .HasDefaultValue(SessionStatus.Pending)
             .IsRequired();
 
-        builder.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("now()").IsRequired();
         builder.Property(x => x.EndedAt).HasColumnName("ended_at");
 
         builder.HasIndex(x => new { x.UserId, x.StartedAt });
@@ -55,12 +55,12 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
         builder.HasIndex(x => new { x.GroupId, x.DisplayName })
             .HasDatabaseName("UX_RecordingSessions_DisplayName_PerGroup")
             .IsUnique()
-            .HasFilter("[group_id] IS NOT NULL");
+            .HasFilter("group_id IS NOT NULL");
 
         builder.HasIndex(x => new { x.UserId, x.DisplayName })
             .HasDatabaseName("UX_RecordingSessions_DisplayName_PerSoloUser")
             .IsUnique()
-            .HasFilter("[group_id] IS NULL");
+            .HasFilter("group_id IS NULL");
 
         builder.HasOne(x => x.Group)
             .WithMany(x => x.RecordingSessions)

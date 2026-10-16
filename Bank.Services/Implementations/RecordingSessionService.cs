@@ -11,7 +11,6 @@ using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NetTopologySuite.Geometries;

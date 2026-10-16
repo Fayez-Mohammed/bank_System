@@ -11,7 +11,7 @@ using Bank.Services.Interfaces.ICertificate;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
-using Hangfire.SqlServer;
+using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -42,21 +42,20 @@ namespace Bank.API.Services
             services
                  .AddDbContext<AppDbContext>(op => op
                  //.UseLazyLoadingProxies(true)
-                 .UseSqlServer(connectionString,
-                  sqlServerOptions => sqlServerOptions.UseNetTopologySuite()));
+                 .UseNpgsql(connectionString,
+                  npgsqlOptions => npgsqlOptions.UseNetTopologySuite()));
 
             services.AddHangfire(configuration => configuration
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
-                .UseSqlServerStorage(connectionString, new SqlServerStorageOptions
-                {
-                    CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
-                    SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
-                    QueuePollInterval = TimeSpan.Zero,
-                    UseRecommendedIsolationLevel = true,
-                    DisableGlobalLocks = true
-                }));
+                .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(connectionString),
+                    new PostgreSqlStorageOptions
+                    {
+                        InvisibilityTimeout = TimeSpan.FromMinutes(5),
+                        QueuePollInterval = TimeSpan.FromSeconds(1),
+                        PrepareSchemaIfNecessary = true
+                    }));
 
             //services.AddHangfireServer(options =>
             //{

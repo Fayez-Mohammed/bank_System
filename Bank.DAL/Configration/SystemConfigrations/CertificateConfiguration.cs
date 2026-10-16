@@ -16,7 +16,7 @@ public class CertificateConfiguration : BaseEntityConfiguration<Certificate>
         builder.Property(x => x.DriveFileId).HasColumnName("drive_file_id").HasMaxLength(100).IsRequired();
         builder.Property(x => x.FileName).HasColumnName("file_name").HasMaxLength(500).IsRequired();
         builder.Property(x => x.BatchNo).HasColumnName("batch_no").IsRequired();
-        builder.Property(x => x.DiscoveredAt).HasColumnName("discovered_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.DiscoveredAt).HasColumnName("discovered_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.Property(x => x.Provider)
             .HasColumnName("provider")

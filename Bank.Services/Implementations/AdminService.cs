@@ -54,7 +54,7 @@ public class AdminService : IAdminService
         {
             var term = pagination.SearchTerm.Trim();
             query = query.Where(u =>
-                u.FullName.Contains(term));
+                u.FullName.ToLower().Contains(term.ToLower()));
         }
 
         var totalCount = await query.CountAsync(ct);

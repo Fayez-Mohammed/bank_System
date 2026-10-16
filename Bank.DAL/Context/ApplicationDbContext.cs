@@ -3,6 +3,7 @@ using Bank.DAL.Models.SystemModels;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Bank.DAL.Context;
 
@@ -32,9 +33,33 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     => Set<RecordingArchivePlate>();
  
     public DbSet<Certificate> Certificates => Set<Certificate>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // Npgsql بيرفض أي DateTime مش UTC في أعمدة timestamptz، فبنثبّت الـ Kind
+        // للتواريخ اللي جاية من الـ client من غير Z (Unspecified) أو بـ offset (Local).
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<UtcDateTimeConverter>();
+    }
+
+    private sealed class UtcDateTimeConverter : ValueConverter<DateTime, DateTime>
+    {
+        public UtcDateTimeConverter()
+            : base(
+                v => v.Kind == DateTimeKind.Utc ? v
+                    : v.Kind == DateTimeKind.Local ? v.ToUniversalTime()
+                    : DateTime.SpecifyKind(v, DateTimeKind.Utc),
+                v => DateTime.SpecifyKind(v, DateTimeKind.Utc))
+        {
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // أعمدة الـ geography (Location) محتاجة PostGIS
+        modelBuilder.HasPostgresExtension("postgis");
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 

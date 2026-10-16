@@ -1,9 +1,10 @@
 using Bank.DAL.Context;
 using Bank.Shared.Enums;
 using Hangfire;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Bank.Services.HangFireJobs;
 
@@ -40,7 +41,7 @@ public class ReferralMatchingJob
         var connectionString = _dbContext.Database.GetConnectionString()
             ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
-        await using var connection = new SqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         try
@@ -86,19 +87,18 @@ public class ReferralMatchingJob
     }
 
     private static async Task MarkSkippedFromActiveCheckFileAsync(
-        SqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = @"
-            UPDATE rp
-            SET rp.status = 'Skipped'
-            FROM referral_plates rp
+            UPDATE referral_plates rp
+            SET status = 'Skipped'
             WHERE rp.referral_job_id = @jobId
               AND EXISTS (
                     SELECT 1
                     FROM check_plates cp
                     JOIN check_files cf ON cf.id = cp.check_file_id
-                    WHERE cf.is_active = 1
+                    WHERE cf.is_active = true
                       AND cp.normalized_plate = rp.normalized_plate
                       AND (
                             (@groupId IS NOT NULL AND cf.group_id = @groupId)
@@ -107,13 +107,13 @@ public class ReferralMatchingJob
               );";
 
         command.Parameters.AddWithValue("@jobId", referralJobId);
-        command.Parameters.AddWithValue("@groupId", (object?)groupId ?? DBNull.Value);
+        command.Parameters.Add("@groupId", NpgsqlDbType.Uuid).Value = (object?)groupId ?? DBNull.Value;
         command.Parameters.AddWithValue("@userId", userId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task InsertMatchResultsAsync(
-        SqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -122,10 +122,10 @@ public class ReferralMatchingJob
                  found_district, found_street, location, found_recorded_at, source_data_file_id, matched_at)
             SELECT
                 @jobId, hp.id, rp.normalized_plate, hp.vehicle_type,
-                hp.district, hp.street, hp.location, hp.recorded_at, hp.data_file_id, SYSUTCDATETIME()
+                hp.district, hp.street, hp.location, hp.recorded_at, hp.data_file_id, now()
             FROM referral_plates rp
             JOIN historical_plates hp ON hp.normalized_plate = rp.normalized_plate
-            JOIN data_files df ON df.id = hp.data_file_id AND df.is_active_for_filtering = 1
+            JOIN data_files df ON df.id = hp.data_file_id AND df.is_active_for_filtering = true
             WHERE rp.referral_job_id = @jobId
               AND rp.status <> 'Skipped'
               AND (
@@ -134,19 +134,18 @@ public class ReferralMatchingJob
               );";
 
         command.Parameters.AddWithValue("@jobId", referralJobId);
-        command.Parameters.AddWithValue("@groupId", (object?)groupId ?? DBNull.Value);
+        command.Parameters.Add("@groupId", NpgsqlDbType.Uuid).Value = (object?)groupId ?? DBNull.Value;
         command.Parameters.AddWithValue("@userId", userId);
         command.CommandTimeout = 300;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task MarkMatchedAsync(SqlConnection connection, Guid referralJobId, CancellationToken cancellationToken)
+    private static async Task MarkMatchedAsync(NpgsqlConnection connection, Guid referralJobId, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = @"
-            UPDATE rp
-            SET rp.status = 'Matched'
-            FROM referral_plates rp
+            UPDATE referral_plates rp
+            SET status = 'Matched'
             WHERE rp.referral_job_id = @jobId
               AND rp.status <> 'Skipped'
               AND EXISTS (
@@ -161,7 +160,7 @@ public class ReferralMatchingJob
     }
 
     private static async Task<int> CountByStatusAsync(
-        SqlConnection connection, Guid referralJobId, ReferralPlateStatus status, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid referralJobId, ReferralPlateStatus status, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM referral_plates WHERE referral_job_id = @jobId AND status = @status";

@@ -13,7 +13,7 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
 
         builder.Property(x => x.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("NEWSEQUENTIALID()")
+            .HasDefaultValueSql("gen_random_uuid()")
             .ValueGeneratedOnAdd();
 
         builder.Property(x => x.FullName)
@@ -34,7 +34,7 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
 
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
 
         builder.Property(x => x.UserName)

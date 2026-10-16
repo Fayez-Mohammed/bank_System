@@ -33,7 +33,7 @@ public class LiveCheckLogConfiguration : BaseEntityLongConfiguration<LiveCheckLo
         builder.Property(x => x.Location).HasColumnName("location").HasMaxLength(500);
         builder.Property(x => x.IsMatched).HasColumnName("is_matched").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.MatchedCheckPlateId).HasColumnName("matched_check_plate_id");
-        builder.Property(x => x.CheckedAt).HasColumnName("checked_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CheckedAt).HasColumnName("checked_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.NormalizedPlate);
         builder.HasIndex(x => new { x.CheckSessionId, x.CheckedAt });

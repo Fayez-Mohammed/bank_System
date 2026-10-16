@@ -84,9 +84,9 @@ namespace Bank.Services.Implementations
             {
                 var term = pagination.SearchTerm.Trim();
                 query = query.Where(u =>
-                    u.FullName.Contains(term) ||
+                    u.FullName.ToLower().Contains(term.ToLower()) ||
                    
-                    u.Email!.Contains(term));
+                    u.Email!.ToLower().Contains(term.ToLower()));
             }
 
             var totalCount = await query.CountAsync(ct);
@@ -244,7 +244,7 @@ namespace Bank.Services.Implementations
             if (!string.IsNullOrWhiteSpace(pagination.SearchTerm))
             {
                 var term = pagination.SearchTerm.Trim();
-                query = query.Where(g => g.Name.Contains(term));
+                query = query.Where(g => g.Name.ToLower().Contains(term.ToLower()));
             }
 
             var totalCount = await query.CountAsync(ct);
@@ -444,8 +444,8 @@ namespace Bank.Services.Implementations
             {
                 var term = pagination.SearchTerm.Trim();
                 query = query.Where(u =>
-                    u.FullName.Contains(term) ||
-                    u.Email!.Contains(term));
+                    u.FullName.ToLower().Contains(term.ToLower()) ||
+                    u.Email!.ToLower().Contains(term.ToLower()));
             }
 
             var totalCount = await query.CountAsync(ct);

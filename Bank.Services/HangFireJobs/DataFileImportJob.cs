@@ -10,9 +10,10 @@ using CsvHelper;
 using CsvHelper.Configuration;
 using ExcelDataReader;
 using Hangfire;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Bank.Services.HangFireJobs;
 
@@ -47,7 +48,7 @@ public class DataFileImportJob
         var connectionString = _dbContext.Database.GetConnectionString()
             ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
-        await using var connection = new SqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         if (!isAppend)
@@ -60,7 +61,7 @@ public class DataFileImportJob
                 replaced, dataFileId, deleteStopwatch.ElapsedMilliseconds);
         }
 
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         try
         {
@@ -85,14 +86,14 @@ public class DataFileImportJob
                 var map = DetectColumnsFromHeaders(csv.HeaderRecord ?? Array.Empty<string>());
 
                 using var readerWrapper = new CsvDataReaderWrapper(csv, map, dataFileId, userId);
-                totalInserted = await ExecuteBulkCopyAsync(connection, transaction, readerWrapper, cancellationToken);
+                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, cancellationToken);
             }
             else
             {
                 using var excelReader = ExcelReaderFactory.CreateReader(stream);
                 var map = DetectColumnsFromExcel(excelReader);
                 using var readerWrapper = new ExcelDataReaderWrapper(excelReader, map, dataFileId, userId);
-                totalInserted = await ExecuteBulkCopyAsync(connection, transaction, readerWrapper, cancellationToken);
+                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, cancellationToken);
             }
 
             parseAndInsertStopwatch.Stop();
@@ -108,7 +109,7 @@ public class DataFileImportJob
                 updateCommand.Transaction = transaction;
                 updateCommand.CommandText = isAppend
                     ? "UPDATE data_files SET row_count = row_count + @rows, import_status = @status, import_error = NULL WHERE id = @id"
-                    : "UPDATE data_files SET row_count = @rows, import_status = @status, is_active_for_filtering = 1, import_error = NULL WHERE id = @id";
+                    : "UPDATE data_files SET row_count = @rows, import_status = @status, is_active_for_filtering = true, import_error = NULL WHERE id = @id";
 
                 updateCommand.Parameters.AddWithValue("@rows", totalInserted);
                 updateCommand.Parameters.AddWithValue("@status", nameof(DataFileImportStatus.Completed));
@@ -148,7 +149,7 @@ public class DataFileImportJob
         var connectionString = _dbContext.Database.GetConnectionString()
             ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
-        await using var connection = new SqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await DeleteHistoricalPlatesAsync(connection, dataFileId, cancellationToken);
@@ -162,7 +163,7 @@ public class DataFileImportJob
     }
 
     private static async Task<int> DeleteHistoricalPlatesAsync(
-        SqlConnection connection, Guid dataFileId, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid dataFileId, CancellationToken cancellationToken)
     {
         // match_results بيشاور على historical_plates بـ Restrict، فلازم نمسح كل
         // match_results المرتبطة (من أي عملية فرز) قبل ما نمسح الصفوف نفسها،
@@ -170,9 +171,9 @@ public class DataFileImportJob
         await using (var deleteMatchesCommand = connection.CreateCommand())
         {
             deleteMatchesCommand.CommandText =
-                "DELETE mr FROM match_results mr " +
-                "INNER JOIN historical_plates hp ON hp.id = mr.historical_plate_id " +
-                "WHERE hp.data_file_id = @dataFileId";
+                "DELETE FROM match_results mr " +
+                "USING historical_plates hp " +
+                "WHERE hp.id = mr.historical_plate_id AND hp.data_file_id = @dataFileId";
             deleteMatchesCommand.Parameters.AddWithValue("@dataFileId", dataFileId);
             await deleteMatchesCommand.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -182,7 +183,10 @@ public class DataFileImportJob
         do
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = $"DELETE TOP ({BatchSize}) FROM historical_plates WHERE data_file_id = @dataFileId";
+            // PostgreSQL مفيهوش DELETE TOP، فبنحدد الدفعة بـ subquery عليها LIMIT
+            command.CommandText =
+                "DELETE FROM historical_plates WHERE id IN (" +
+                $"SELECT id FROM historical_plates WHERE data_file_id = @dataFileId LIMIT {BatchSize})";
             command.Parameters.AddWithValue("@dataFileId", dataFileId);
             deletedInBatch = await command.ExecuteNonQueryAsync(cancellationToken);
             totalDeleted += deletedInBatch;
@@ -193,29 +197,32 @@ public class DataFileImportJob
     }
 
     private static async Task<int> ExecuteBulkCopyAsync(
-        SqlConnection connection, SqlTransaction transaction, IDataReader reader, CancellationToken cancellationToken)
+        NpgsqlConnection connection, IDataReader reader, CancellationToken cancellationToken)
     {
-        using var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, transaction)
+        // COPY بالـ binary format هو المقابل لـ SqlBulkCopy في PostgreSQL، وبيشتغل
+        // جوه الـ transaction المفتوحة على الـ connection تلقائياً.
+        await using var importer = await connection.BeginBinaryImportAsync(
+            "COPY historical_plates (data_file_id, user_id, raw_plate, normalized_plate, vehicle_type, " +
+            "district, street, location, recorded_at, notes, recorder_name) FROM STDIN (FORMAT BINARY)",
+            cancellationToken);
+        importer.Timeout = TimeSpan.FromSeconds(BulkCopyTimeoutSeconds);
+
+        while (reader.Read())
         {
-            DestinationTableName = "historical_plates",
-            BatchSize = BatchSize,
-            BulkCopyTimeout = BulkCopyTimeoutSeconds,
-            EnableStreaming = true
-        };
+            await importer.StartRowAsync(cancellationToken);
+            await importer.WriteAsync(reader.GetGuid(0), NpgsqlDbType.Uuid, cancellationToken);
+            await importer.WriteAsync(reader.GetGuid(1), NpgsqlDbType.Uuid, cancellationToken);
 
-        bulkCopy.ColumnMappings.Add(0, "data_file_id");
-        bulkCopy.ColumnMappings.Add(1, "user_id");
-        bulkCopy.ColumnMappings.Add(2, "raw_plate");
-        bulkCopy.ColumnMappings.Add(3, "normalized_plate");
-        bulkCopy.ColumnMappings.Add(4, "vehicle_type");
-        bulkCopy.ColumnMappings.Add(5, "district");
-        bulkCopy.ColumnMappings.Add(6, "street");
-        bulkCopy.ColumnMappings.Add(7, "location");
-        bulkCopy.ColumnMappings.Add(8, "recorded_at");
-        bulkCopy.ColumnMappings.Add(9, "notes");
-        bulkCopy.ColumnMappings.Add(10, "recorder_name");
+            for (var i = 2; i < reader.FieldCount; i++)
+            {
+                if (reader.IsDBNull(i))
+                    await importer.WriteNullAsync(cancellationToken);
+                else
+                    await importer.WriteAsync(reader.GetString(i), NpgsqlDbType.Varchar, cancellationToken);
+            }
+        }
 
-        await bulkCopy.WriteToServerAsync(reader, cancellationToken);
+        await importer.CompleteAsync(cancellationToken);
         return ((IRowCounter)reader).TotalReadRows;
     }
 

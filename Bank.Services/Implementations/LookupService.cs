@@ -21,7 +21,7 @@ namespace Bank.Services.Implementations
         public async Task<ApiResponse<List<UserLookupDto>>> GetAdminsAsync(string? searchTerm, CancellationToken cancellationToken)
         {
             var users = await _dbContext.Users
-                         .Where(u => u.FullName.Contains(searchTerm ?? "") && u.Role == UserRole.Admin && u.IsActive)
+                         .Where(u => u.FullName.ToLower().Contains((searchTerm ?? "").ToLower()) && u.Role == UserRole.Admin && u.IsActive)
                          .Select(u => new UserLookupDto
                          {
                              Id = u.Id,
@@ -34,7 +34,7 @@ namespace Bank.Services.Implementations
         public async Task<ApiResponse<List<GroupLookupDto>>> GetGroupsAsync(string? searchTerm, CancellationToken cancellationToken)
         {
             var groups = await _dbContext.Groups
-                .Where(g => g.Name.Contains(searchTerm??""))
+                .Where(g => g.Name.ToLower().Contains((searchTerm ?? "").ToLower()))
                 .Select(g => new GroupLookupDto
                 {
                     Id = g.Id,
@@ -48,7 +48,7 @@ namespace Bank.Services.Implementations
         {
            
             var users = await _dbContext.Users
-                .Where(u => u.FullName.Contains(searchTerm??"")&&u.Role==UserRole.User&&u.IsActive)
+                .Where(u => u.FullName.ToLower().Contains((searchTerm ?? "").ToLower())&&u.Role==UserRole.User&&u.IsActive)
                 .Select(u => new UserLookupDto
                 {
                     Id = u.Id,

@@ -40,12 +40,12 @@ public class GroupConfiguration : BaseEntityConfiguration<Group>
 
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
 
         builder.HasIndex(x => x.AdminId)
             .IsUnique()
-            .HasFilter("[admin_id] IS NOT NULL");
+            .HasFilter("admin_id IS NOT NULL");
 
         builder.HasIndex(x => x.LastSharedReferralJobId);
 

@@ -47,7 +47,7 @@ public class ManualCheckConfiguration : BaseEntityLongConfiguration<ManualCheck>
 
         builder.Property(x => x.CheckedAt)
             .HasColumnName("checked_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
 
 

@@ -29,7 +29,7 @@ public class RecordingArchivePlateConfiguration : BaseEntityLongConfiguration<Re
         builder.Property(x => x.AppendedToDataFileId).HasColumnName("appended_to_data_file_id");
         builder.Property(x => x.AppendedAt).HasColumnName("appended_at");
 
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.UserId);
         builder.HasIndex(x => x.SourceSessionId);

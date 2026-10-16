@@ -48,7 +48,7 @@ public class UserPermissionConfiguration : BaseEntityConfiguration<UserPermissio
 
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
         builder.Property(x => x.CanUploadCheckFile).HasColumnName("can_upload_check_file").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.CanUploadDataFiles).HasColumnName("can_upload_data_files").HasDefaultValue(false).IsRequired();

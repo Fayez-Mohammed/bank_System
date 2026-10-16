@@ -11,7 +11,8 @@ using Bank.Shared.Enums;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExcelDataReader;
-using Microsoft.Data.SqlClient;
+using Npgsql;
+using NpgsqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -228,22 +229,27 @@ public class CheckFileService : ICheckFileService
         var connectionString = dbContext.Database.GetConnectionString()
             ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
-        await using var connection = new SqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        using var bulkCopy = new SqlBulkCopy(connection)
-        {
-            DestinationTableName = "check_plates",
-            BulkCopyTimeout = 120
-        };
-        bulkCopy.ColumnMappings.Add("check_file_id", "check_file_id");
-        bulkCopy.ColumnMappings.Add("raw_plate", "raw_plate");
-        bulkCopy.ColumnMappings.Add("normalized_plate", "normalized_plate");
-        bulkCopy.ColumnMappings.Add("bank_name", "bank_name");
-        bulkCopy.ColumnMappings.Add("vehicle_type", "vehicle_type");
-        bulkCopy.ColumnMappings.Add("chassis_number", "chassis_number");
+        await using var importer = await connection.BeginBinaryImportAsync(
+            "COPY check_plates (check_file_id, raw_plate, normalized_plate, bank_name, vehicle_type, chassis_number) FROM STDIN (FORMAT BINARY)", cancellationToken);
+        importer.Timeout = TimeSpan.FromSeconds(120);
 
-        await bulkCopy.WriteToServerAsync(table, cancellationToken);
+        foreach (DataRow row in table.Rows)
+        {
+            await importer.StartRowAsync(cancellationToken);
+            await importer.WriteAsync((Guid)row["check_file_id"], NpgsqlDbType.Uuid, cancellationToken);
+            foreach (var column in new[] { "raw_plate", "normalized_plate", "bank_name", "vehicle_type", "chassis_number" })
+            {
+                if (row[column] is string value)
+                    await importer.WriteAsync(value, NpgsqlDbType.Varchar, cancellationToken);
+                else
+                    await importer.WriteNullAsync(cancellationToken);
+            }
+        }
+
+        await importer.CompleteAsync(cancellationToken);
         return table.Rows.Count;
     }
 

@@ -25,10 +25,10 @@ public class AuditLogConfiguration : BaseEntityLongConfiguration<AuditLog>
 
         builder.Property(x => x.EntityName).HasColumnName("entity_name").HasMaxLength(100).IsRequired();
         builder.Property(x => x.EntityId).HasColumnName("entity_id").HasMaxLength(100).IsRequired();
-        builder.Property(x => x.OldValues).HasColumnName("old_values").HasColumnType("nvarchar(max)");
-        builder.Property(x => x.NewValues).HasColumnName("new_values").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.OldValues).HasColumnName("old_values").HasColumnType("text");
+        builder.Property(x => x.NewValues).HasColumnName("new_values").HasColumnType("text");
         builder.Property(x => x.IpAddress).HasColumnName("ip_address").HasMaxLength(50);
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => new { x.GroupId, x.CreatedAt });
         builder.HasIndex(x => new { x.UserId, x.CreatedAt });
