@@ -6,7 +6,9 @@ using Bank.DAL.Context;
 using Bank.DAL.Data;
 using Bank.DAL.Models.BaseModels;
 using Bank.Services.AssemblyMarker;
+using Bank.Services.HangFireJobs;
 using Hangfire;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 //using Serilog;
@@ -18,6 +20,7 @@ namespace Bank
         public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+
         //    Log.Logger = new LoggerConfiguration()
         //.ReadFrom.Configuration(builder.Configuration)
         //.Enrich.FromLogContext()
@@ -41,6 +44,8 @@ namespace Bank
         //.CreateLogger();
 
         //    builder.Host.UseSerilog();
+
+
             builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
             {
                 options.Password.RequireDigit = false;
@@ -97,8 +102,15 @@ namespace Bank
                         context.User.IsInRole("Admin") ||
                         context.User.IsInRole("SuperAdmin") ||
                         context.User.HasClaim("CanUploadCheckFile", "true")));
+                options.AddPolicy("CanSort", policy =>
+                    policy.RequireAssertion(context =>
+                        context.User.IsInRole("Admin") ||
+                        context.User.IsInRole("SuperAdmin") ||
+                        context.User.HasClaim("CanSort", "true")));
             });
             builder.Services.AddMemoryCache();
+            var dpKeysPath = builder.Configuration["DataProtection:KeysPath"];
+            
             var app = builder.Build();
 
             using (var scope = app.Services.CreateScope())
@@ -126,6 +138,10 @@ namespace Bank
             {
                 Authorization = new[] { new HangfireAuthorizationFilter() }
             });
+            RecurringJob.AddOrUpdate<CertificateSyncJob>(
+                "certificate-sync",
+                job => job.SyncAsync(CancellationToken.None),
+                app.Configuration["Certificates:SyncCron"] ?? "*/10 * * * *");
             app.MapHub<LiveCheckHub>("/hubs/live-check");
 
             app.MapControllers();

@@ -1,11 +1,17 @@
-using FluentValidation;
-using FluentValidation.AspNetCore;
 using Bank.API.Filters;
 using Bank.DAL.Context;
 using Bank.Repo.Implementations;
 using Bank.Repo.Interfaces;
 using Bank.Services.AssemblyMarker;
+using Bank.Services.HangFireJobs;
+using Bank.Services.Implementations;
+using Bank.Services.Implementations.CertificateServices;
 using Bank.Services.Interfaces;
+using Bank.Services.Interfaces.ICertificate;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -16,10 +22,6 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Serialization;
-using Bank.Services.Implementations;
-using Hangfire;
-using Hangfire.SqlServer;
-using Bank.Services.HangFireJobs;
 namespace Bank.API.Services
 {
     public static class ServiceCollectionExtentions
@@ -63,8 +65,10 @@ namespace Bank.API.Services
             //});
             services.AddHangfireServer(options =>
             {
-               
-                options.Queues = new[] { "default", "bulk-import", "recording-processing" };
+
+                // options.Queues = new[] { "default", "bulk-import", "recording-processing" };
+                options.Queues = new[] { "default", "bulk-import", "recording-processing", "certificates" };
+
                 options.WorkerCount = 4;
             });
             services.AddScoped<DataFileImportJob>();
@@ -102,6 +106,13 @@ namespace Bank.API.Services
             services.AddScoped<ILiveCheckAiConnector,WebSocketLiveCheckAiConnector>();
 
             services.AddScoped<ILiveCheckSessionService,LiveCheckSessionService>();
+
+            services.AddSingleton<IGoogleDriveClient, GoogleDriveClient>();     // Singleton: بدون DB، حالة الربط في الذاكرة
+            services.AddSingleton<ICertificateExtractor, CertificateExtractor>(); // Singleton: Pool لمحركات OCR
+            services.AddScoped<ICertificateService, CertificateService>();
+            services.AddScoped<CertificateSyncJob>();
+            services.AddScoped<CertificateExtractionJob>();
+            // وتأكد إن الـ queue "certificates" في options.Queues بتاع AddHangfireServer
 
             return services;
         }

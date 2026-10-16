@@ -30,6 +30,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     public DbSet<CheckSession> CheckSessions => Set<CheckSession>();
     public DbSet<RecordingArchivePlate> RecordingArchivePlates
     => Set<RecordingArchivePlate>();
+ 
+    public DbSet<Certificate> Certificates => Set<Certificate>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

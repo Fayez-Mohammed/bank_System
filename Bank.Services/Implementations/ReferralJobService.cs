@@ -44,6 +44,63 @@ public class ReferralJobService : IReferralJobService
         _backgroundJobClient = backgroundJobClient;
         _checkPlateCache = checkPlateCache;
     }
+    public async Task<ApiResponse<Guid>> CreateFromActiveCheckFileAsync(
+     Guid userId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await _dbContext.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.GroupId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
+
+        var activeCheckFile = await _dbContext.CheckFiles
+            .AsNoTracking()
+            .Where(f => f.IsActive)
+            .Where(f => userScope.GroupId.HasValue
+                ? f.GroupId == userScope.GroupId.Value
+                : f.GroupId == null && f.UploadedBy == userId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (activeCheckFile is null)
+        {
+            return ApiResponse<Guid>.Fail("مفيش ملف تشييك نشط حاليًا.", null, 400);
+        }
+
+        var checkPlates = await _dbContext.CheckPlates
+            .AsNoTracking()
+            .Where(cp => cp.CheckFileId == activeCheckFile.Id)
+            .Select(cp => new { cp.RawPlate, cp.VehicleType, cp.BankName })
+            .ToListAsync(cancellationToken);
+
+        if (checkPlates.Count == 0)
+        {
+            return ApiResponse<Guid>.Fail("ملف التشييك النشط فاضي، مفيش لوحات فيه.", null, 400);
+        }
+
+        // كل لوحة في ملف التشييك بتتحول لـ "لوحة إحالة"، وأعمدتها الإضافية (ExtraDataJson)
+        // هي نوع السيارة والبنك — نفس آلية ExtraDataJson بتاعة ملفات الإحالة المرفوعة عادي.
+        var rawPlates = checkPlates.Select(cp =>
+        {
+            var extra = new Dictionary<string, string?>();
+            if (!string.IsNullOrWhiteSpace(cp.VehicleType)) extra["نوع السيارة"] = cp.VehicleType;
+            if (!string.IsNullOrWhiteSpace(cp.BankName)) extra["البنك"] = cp.BankName;
+
+            return new RawReferralPlate(cp.RawPlate, extra.Count > 0 ? JsonSerializer.Serialize(extra) : null);
+        }).ToList();
+
+        // دايمًا Full — لأن المصدر هنا هو ملف التشييك النشط نفسه. لو استخدمنا New
+        // (اللي بيعلّم اللوحات الموجودة في ملف التشييك النشط كـ Skipped) كل اللوحات
+        // هتتعلّم Skipped على طول وهو أصلًا نفس الملف.
+        return await CreateReferralJobInternalAsync(
+            userId, FilterType.Full, SourceType.CheckFile, activeCheckFile.FileName,
+            password: null, rawPlates,
+            selectedReferralColumns: new List<string> { "نوع السيارة", "البنك" },
+            selectedHistoricalColumns: null,
+            cancellationToken);
+    }
+
     public async Task<(byte[] FileBytes, string FileName)> ExportCombinedResultsAsync(
     List<Guid> referralJobIds, Guid currentUserId, CancellationToken cancellationToken = default)
     {

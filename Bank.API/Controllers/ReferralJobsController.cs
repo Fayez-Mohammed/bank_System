@@ -25,6 +25,20 @@ public class ReferralJobsController : ControllerBase
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
     /// <summary>
+    /// Treats the user's active check file as a referral file and runs it through the normal
+    /// referral matching flow against all active historical data files. Results show BankName
+    /// and VehicleType from the check file as the "referral columns", alongside the usual
+    /// historical data columns.
+    /// </summary>
+    [HttpPost("from-check-file")]
+    [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateFromCheckFile(CancellationToken cancellationToken)
+    {
+        var result = await _referralJobService.CreateFromActiveCheckFileAsync(CurrentUserId, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+    /// <summary>
     /// Exports a single combined Excel file from multiple referral jobs' matched results,
     /// grouped by data file across all of them (so e.g. "مكة 2026" rows from any selected
     /// referral job end up in the same group). Meant to be picked up by the client and shared
