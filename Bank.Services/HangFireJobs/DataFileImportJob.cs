@@ -51,20 +51,22 @@ public class DataFileImportJob
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        if (!isAppend)
-        {
-            var deleteStopwatch = Stopwatch.StartNew();
-            var replaced = await DeleteHistoricalPlatesAsync(connection, dataFileId, cancellationToken);
-            deleteStopwatch.Stop();
-            _logger.LogInformation(
-                "PHASE delete: cleared {Count} existing rows for DataFile {DataFileId} in {ElapsedMs}ms",
-                replaced, dataFileId, deleteStopwatch.ElapsedMilliseconds);
-        }
-
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         try
         {
+            // الحذف جوه نفس الـ transaction بتاعة الـ import: لو الاستيراد فشل، الـ rollback
+            // بيرجّع الصفوف القديمة بدل ما الملف يفضل فاضي.
+            if (!isAppend)
+            {
+                var deleteStopwatch = Stopwatch.StartNew();
+                var replaced = await DeleteHistoricalPlatesAsync(connection, dataFileId, cancellationToken);
+                deleteStopwatch.Stop();
+                _logger.LogInformation(
+                    "PHASE delete: cleared {Count} existing rows for DataFile {DataFileId} in {ElapsedMs}ms",
+                    replaced, dataFileId, deleteStopwatch.ElapsedMilliseconds);
+            }
+
             var parseAndInsertStopwatch = Stopwatch.StartNew();
 
             await using var stream = await _fileStorage.OpenReadAsync(storagePath, cancellationToken);

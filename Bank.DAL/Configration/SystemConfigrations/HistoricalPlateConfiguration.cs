@@ -33,9 +33,11 @@ public class HistoricalPlateConfiguration : BaseEntityLongConfiguration<Historic
         builder.Property(x => x.RecorderName).HasColumnName("recorder_name").HasMaxLength(150);
 
 
-        builder.HasIndex(x => x.NormalizedPlate);
-        builder.HasIndex(x => new { x.DataFileId, x.NormalizedPlate });
-        builder.HasIndex(x => x.UserId);
+        // الفرز بيعمل JOIN على normalized_plate وبعدين بيفلتر بالملف، فـ data_file_id
+        // جوه نفس الـ index بيخلّي Postgres يستبعد الملفات اللي برّه النطاق من غير ما يقرا الصف.
+        builder.HasIndex(x => new { x.NormalizedPlate, x.DataFileId });
+        // للحذف/الاستبدال بالملف وللـ FK. مفيش index على user_id لأن مفيش query بتستخدمه.
+        builder.HasIndex(x => x.DataFileId);
 
         builder.HasOne(x => x.DataFile)
             .WithMany(x => x.HistoricalPlates)
