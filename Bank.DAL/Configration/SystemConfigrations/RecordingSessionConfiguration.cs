@@ -22,6 +22,7 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
         builder.Property(x => x.Street).HasColumnName("street").HasMaxLength(150).IsRequired();
         builder.Property(x => x.ExcelSheetName).HasColumnName("excel_sheet_name").HasMaxLength(150).IsRequired();
         builder.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(180).IsRequired();
+        builder.Property(x => x.RecorderName).HasColumnName("recorder_name");
         builder.Property(x => x.IsRecord).HasColumnName("is_record").HasDefaultValue(true);
         builder.Property(x => x.TrackingMode)
             .HasColumnName("tracking_mode")

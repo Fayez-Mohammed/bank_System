@@ -9,6 +9,8 @@ public class ManualCheckConfiguration : BaseEntityLongConfiguration<ManualCheck>
 {
     public override void Configure(EntityTypeBuilder<ManualCheck> builder)
     {
+        base.Configure(builder);
+
         builder.ToTable("manual_checks");
 
 

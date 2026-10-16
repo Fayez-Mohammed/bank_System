@@ -27,6 +27,8 @@ public class RecordedPlateConfiguration : BaseEntityLongConfiguration<RecordedPl
         builder.Property(x => x.IsMatched).HasColumnName("is_matched").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.MatchedCheckPlateId).HasColumnName("matched_check_plate_id");
         builder.Property(x => x.IsManualEntry).HasColumnName("is_manual_entry").HasDefaultValue(false).IsRequired();
+        builder.Property(x => x.BankName).HasColumnName("bank_name");
+        builder.Property(x => x.VehicleTypeInCheckFile).HasColumnName("vehicle_type_in_check_file");
         builder.Property(x => x.RecordedAt).HasColumnName("recorded_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.NormalizedPlate);
