@@ -60,11 +60,11 @@ public class DataFileConfiguration : BaseEntityConfiguration<DataFile>
 
         builder.Property(x => x.ImportError)
             .HasColumnName("import_error")
-            .HasColumnType("nvarchar(max)");
+            .HasColumnType("text");
 
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
 
         builder.HasIndex(x => x.GroupId);

@@ -20,7 +20,7 @@ public class CheckPlateConfiguration : BaseEntityLongConfiguration<CheckPlate>
         builder.Property(x => x.VehicleType).HasColumnName("vehicle_type").HasMaxLength(1000);
         builder.Property(x => x.ChassisNumber).HasColumnName("chassis_number").HasMaxLength(100);
         builder.Property(x => x.ClaimStatus).HasColumnName("claim_status").HasMaxLength(100);
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.NormalizedPlate);
         builder.HasIndex(x => new { x.CheckFileId, x.NormalizedPlate }).IsUnique();

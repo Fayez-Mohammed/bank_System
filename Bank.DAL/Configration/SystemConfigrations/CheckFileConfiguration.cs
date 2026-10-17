@@ -18,19 +18,19 @@ public class CheckFileConfiguration : BaseEntityConfiguration<CheckFile>
         builder.Property(x => x.FileName).HasColumnName("file_name").HasMaxLength(255).IsRequired();
         builder.Property(x => x.TotalPlates).HasColumnName("total_plates").HasDefaultValue(0).IsRequired();
         builder.Property(x => x.IsActive).HasColumnName("is_active").HasDefaultValue(true).IsRequired();
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => x.UploadedBy);
 
         builder.HasIndex(x => x.GroupId)
             .HasDatabaseName("UX_CheckFiles_OneActivePerGroup")
             .IsUnique()
-            .HasFilter("[is_active] = 1 AND [group_id] IS NOT NULL");
+            .HasFilter("is_active = true AND group_id IS NOT NULL");
 
         builder.HasIndex(x => x.UploadedBy)
             .HasDatabaseName("UX_CheckFiles_OneActivePerSoloUser")
             .IsUnique()
-            .HasFilter("[is_active] = 1 AND [group_id] IS NULL");
+            .HasFilter("is_active = true AND group_id IS NULL");
 
         builder.HasOne(x => x.Group)
             .WithMany(x => x.CheckFiles)

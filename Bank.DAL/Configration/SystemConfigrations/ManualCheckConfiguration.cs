@@ -9,6 +9,8 @@ public class ManualCheckConfiguration : BaseEntityLongConfiguration<ManualCheck>
 {
     public override void Configure(EntityTypeBuilder<ManualCheck> builder)
     {
+        base.Configure(builder);
+
         builder.ToTable("manual_checks");
 
 
@@ -47,7 +49,7 @@ public class ManualCheckConfiguration : BaseEntityLongConfiguration<ManualCheck>
 
         builder.Property(x => x.CheckedAt)
             .HasColumnName("checked_at")
-            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .HasDefaultValueSql("now()")
             .IsRequired();
 
 

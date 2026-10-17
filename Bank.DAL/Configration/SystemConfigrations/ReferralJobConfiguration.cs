@@ -44,13 +44,13 @@ public class ReferralJobConfiguration : BaseEntityConfiguration<ReferralJob>
             .IsRequired();
         builder.Property(x => x.SelectedHistoricalColumnsJson)
            .HasColumnName("selected_historical_columns_json")
-           .HasColumnType("nvarchar(max)");
+           .HasColumnType("text");
 
         builder.Property(x => x.ReferralColumnsJson)
             .HasColumnName("referral_columns_json")
-            .HasColumnType("nvarchar(max)");
+            .HasColumnType("text");
 
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
         builder.HasIndex(x => new { x.GroupId, x.CreatedAt });
         builder.HasIndex(x => new { x.UserId, x.CreatedAt });

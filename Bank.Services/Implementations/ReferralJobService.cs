@@ -10,7 +10,8 @@ using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.SqlClient;
+using Npgsql;
+using NpgsqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
@@ -438,21 +439,27 @@ public class ReferralJobService : IReferralJobService
         var connectionString = _dbContext.Database.GetConnectionString()
             ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
-        await using var connection = new SqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        using var bulkCopy = new SqlBulkCopy(connection)
-        {
-            DestinationTableName = "referral_plates",
-            BulkCopyTimeout = 120
-        };
-        bulkCopy.ColumnMappings.Add("referral_job_id", "referral_job_id");
-        bulkCopy.ColumnMappings.Add("raw_plate", "raw_plate");
-        bulkCopy.ColumnMappings.Add("normalized_plate", "normalized_plate");
-        bulkCopy.ColumnMappings.Add("status", "status");
-        bulkCopy.ColumnMappings.Add("extra_data_json", "extra_data_json");
+        await using var importer = await connection.BeginBinaryImportAsync(
+            "COPY referral_plates (referral_job_id, raw_plate, normalized_plate, status, extra_data_json) FROM STDIN (FORMAT BINARY)", cancellationToken);
+        importer.Timeout = TimeSpan.FromSeconds(120);
 
-        await bulkCopy.WriteToServerAsync(table, cancellationToken);
+        foreach (DataRow row in table.Rows)
+        {
+            await importer.StartRowAsync(cancellationToken);
+            await importer.WriteAsync((Guid)row["referral_job_id"], NpgsqlDbType.Uuid, cancellationToken);
+            foreach (var column in new[] { "raw_plate", "normalized_plate", "status", "extra_data_json" })
+            {
+                if (row[column] is string value)
+                    await importer.WriteAsync(value, NpgsqlDbType.Varchar, cancellationToken);
+                else
+                    await importer.WriteNullAsync(cancellationToken);
+            }
+        }
+
+        await importer.CompleteAsync(cancellationToken);
     }
 
     public async Task<ApiResponse<ReferralJobStatusDto>> GetStatusAsync(

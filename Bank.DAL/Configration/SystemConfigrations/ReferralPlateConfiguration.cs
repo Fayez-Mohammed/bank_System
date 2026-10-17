@@ -25,8 +25,8 @@ public class ReferralPlateConfiguration : BaseEntityLongConfiguration<ReferralPl
             .IsRequired();
         builder.Property(x => x.ExtraDataJson)
         .HasColumnName("extra_data_json")
-        .HasColumnType("nvarchar(max)");
-        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        .HasColumnType("text");
+        builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()").IsRequired();
 
        
         builder.HasIndex(x => new { x.ReferralJobId, x.NormalizedPlate }).IsUnique();

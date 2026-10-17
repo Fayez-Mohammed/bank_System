@@ -24,7 +24,7 @@ public class CheckSessionConfiguration : BaseEntityConfiguration<CheckSession>
         builder.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(180).IsRequired();
 
         builder.Property(x => x.TotalPlates).HasColumnName("total_plates").HasDefaultValue(0);
-        builder.Property(x => x.ProcessingError).HasColumnName("processing_error").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.ProcessingError).HasColumnName("processing_error").HasColumnType("text");
 
         builder.Property(x => x.Status)
             .HasColumnName("status")
@@ -33,7 +33,7 @@ public class CheckSessionConfiguration : BaseEntityConfiguration<CheckSession>
             .HasDefaultValue(SessionStatus.Recording)
             .IsRequired();
 
-        builder.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
+        builder.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("now()").IsRequired();
         builder.Property(x => x.EndedAt).HasColumnName("ended_at");
 
         builder.HasIndex(x => new { x.UserId, x.StartedAt });
@@ -42,12 +42,12 @@ public class CheckSessionConfiguration : BaseEntityConfiguration<CheckSession>
         builder.HasIndex(x => new { x.GroupId, x.DisplayName })
             .HasDatabaseName("UX_CheckSessions_DisplayName_PerGroup")
             .IsUnique()
-            .HasFilter("[group_id] IS NOT NULL");
+            .HasFilter("group_id IS NOT NULL");
 
         builder.HasIndex(x => new { x.UserId, x.DisplayName })
             .HasDatabaseName("UX_CheckSessions_DisplayName_PerSoloUser")
             .IsUnique()
-            .HasFilter("[group_id] IS NULL");
+            .HasFilter("group_id IS NULL");
 
         builder.HasOne(x => x.Group).WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);

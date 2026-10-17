@@ -13,7 +13,7 @@ public abstract class BaseEntityConfiguration<TEntity> : IEntityTypeConfiguratio
 
         builder.Property(x => x.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("NEWSEQUENTIALID()")
+            .HasDefaultValueSql("gen_random_uuid()")
             .ValueGeneratedOnAdd();
     }
 }
