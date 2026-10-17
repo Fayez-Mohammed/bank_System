@@ -13,8 +13,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Bank.DAL.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261016195535_Init")]
-    partial class Init
+    [Migration("20261016223310_init")]
+    partial class init
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

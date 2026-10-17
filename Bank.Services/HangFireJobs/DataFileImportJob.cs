@@ -11,6 +11,7 @@ using CsvHelper.Configuration;
 using ExcelDataReader;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
@@ -22,6 +23,7 @@ public class DataFileImportJob
 {
     private const int BatchSize = 25_000;
     private const int BulkCopyTimeoutSeconds = 600;
+    private readonly IConfiguration _configuration;
 
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
@@ -32,11 +34,12 @@ public class DataFileImportJob
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
-    public DataFileImportJob(AppDbContext dbContext, IFileStorageService fileStorage, ILogger<DataFileImportJob> logger)
+    public DataFileImportJob(AppDbContext dbContext, IFileStorageService fileStorage, ILogger<DataFileImportJob> logger, IConfiguration configuration)
     {
         _dbContext = dbContext;
         _fileStorage = fileStorage;
         _logger = logger;
+        _configuration = configuration;
     }
 
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
@@ -44,12 +47,16 @@ public class DataFileImportJob
     {
         var totalStopwatch = Stopwatch.StartNew();
         _logger.LogInformation("Import job started for DataFile {DataFileId} (append={IsAppend})", dataFileId, isAppend);
-
-        var connectionString = _dbContext.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
+        //var connectionString = _dbContext.Database.GetConnectionString()
+        //    ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+
+        //await using var connection = new NpgsqlConnection(connectionString);
+        //await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
@@ -148,9 +155,8 @@ public class DataFileImportJob
     {
         _logger.LogInformation("Delete job started for DataFile {DataFileId}", dataFileId);
 
-        var connectionString = _dbContext.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
-
+        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+   ?? throw new InvalidOperationException("Could not resolve the database connection string.");
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 

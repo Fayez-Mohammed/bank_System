@@ -20,12 +20,15 @@ public class HistoricalPlateConfiguration : BaseEntityLongConfiguration<Historic
         builder.Property(x => x.VehicleType).HasColumnName("vehicle_type").HasMaxLength(100);
         builder.Property(x => x.District).HasColumnName("district").HasMaxLength(150);
         builder.Property(x => x.Street).HasColumnName("street").HasMaxLength(150);
+        builder.Property(x => x.RecordedAt)
+    .HasColumnName("recorded_at")
+    .HasMaxLength(500);
         builder.Property(x => x.Location)
             .HasColumnName("location")
             .HasMaxLength(500)
             .IsRequired(false);
-            .HasMaxLength(500)
-            .IsRequired(false);
+            //.HasMaxLength(500)
+           // .IsRequired(false);
 
         builder.Property(x => x.Notes).HasColumnName("notes").HasMaxLength(500);
         builder.Property(x => x.RecorderName).HasColumnName("recorder_name").HasMaxLength(150);
