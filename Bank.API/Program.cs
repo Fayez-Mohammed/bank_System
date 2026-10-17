@@ -11,6 +11,7 @@ using Hangfire;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
+using System.Text;
 //using Serilog;
 //using Serilog.Events;
 namespace Bank
@@ -19,6 +20,7 @@ namespace Bank
     {
         public static async Task Main(string[] args)
         {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             var builder = WebApplication.CreateBuilder(args);
 
         //    Log.Logger = new LoggerConfiguration()

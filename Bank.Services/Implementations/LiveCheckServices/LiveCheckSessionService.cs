@@ -9,6 +9,7 @@ using Bank.Shared.DTOs.LiveCheckDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Bank.Services.Implementations;
@@ -18,12 +19,14 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     private readonly ILogger<LiveCheckSessionService> _logger;
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
+    private readonly IConfiguration _configuration;
 
-    public LiveCheckSessionService(ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext)
+    public LiveCheckSessionService(ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext, IConfiguration configuration)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
+        _configuration = configuration;
     }
 
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(

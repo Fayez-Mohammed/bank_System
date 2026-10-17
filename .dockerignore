@@ -1,0 +1,24 @@
+# Version control / IDE
+.git
+.gitignore
+.vs
+.vscode
+.idea
+*.user
+
+# Build output
+**/bin/
+**/obj/
+**/[Dd]ebug/
+**/[Rr]elease/
+
+# Local secrets / data
+.env
+**/App_Data/
+**/Logs/
+**/*.log
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore

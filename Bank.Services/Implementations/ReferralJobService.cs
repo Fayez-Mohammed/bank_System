@@ -16,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 namespace Bank.Services.Implementations;
 
 public class ReferralJobService : IReferralJobService
@@ -32,11 +33,11 @@ public class ReferralJobService : IReferralJobService
 
     // لوحة إحالة واحدة بعد قراءتها من الملف — القيمة الخام + باقي أعمدة نفس الصف كـ JSON.
     private sealed record RawReferralPlate(string RawPlate, string? ExtraDataJson);
-
+    private readonly IConfiguration _configuration;
     public ReferralJobService(
         ILogger<ReferralJobService> logger, IUnitOfWork unit, AppDbContext dbContext,
         IPlateColumnDetector columnDetector, IBackgroundJobClient backgroundJobClient,
-        ICheckPlateCacheService checkPlateCache)
+        ICheckPlateCacheService checkPlateCache, IConfiguration configuration)
     {
         _logger = logger;
         _unit = unit;
@@ -44,6 +45,7 @@ public class ReferralJobService : IReferralJobService
         _columnDetector = columnDetector;
         _backgroundJobClient = backgroundJobClient;
         _checkPlateCache = checkPlateCache;
+        _configuration = configuration;
     }
     public async Task<ApiResponse<Guid>> CreateFromActiveCheckFileAsync(
      Guid userId, CancellationToken cancellationToken = default)
@@ -436,8 +438,8 @@ public class ReferralJobService : IReferralJobService
             table.Rows.Add(dr);
         }
 
-        var connectionString = _dbContext.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);

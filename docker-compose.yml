@@ -1,0 +1,77 @@
+name: bank
+
+services:
+  # ------------------------------------------------------------ PostgreSQL + PostGIS
+  # The app uses geography columns, so the official `postgres` image is NOT enough;
+  # `postgis/postgis` is the official PostGIS image and already enables PostGIS.
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bank_system}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your .env file}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bank_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Uncomment ONLY if an outside machine must reach the DB directly (not needed
+    # when the API runs in this same compose stack):
+    # ports:
+    #   - "${DB_BIND:-127.0.0.1}:5432:5432"
+
+  # ------------------------------------------------- one-shot migration runner
+  # Built from the Dockerfile `migrator` stage (EF Core bundle). Runs, applies
+  # migrations, exits. `api` waits for it to finish successfully.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - "--connection"
+      - "Host=db;Port=5432;Database=${POSTGRES_DB:-bank_system};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}"
+
+  # ------------------------------------------------------------------ Bank API
+  api:
+    build:
+      context: .
+      target: final
+    image: bank-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      # Trust X-Forwarded-* headers from Nginx/Caddy sitting in front of the app.
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-bank_system};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}"
+
+      Auth__JWT__Key: ${JWT_KEY:?set JWT_KEY in your .env file}
+      Gemini__ApiKey: ${GEMINI_API_KEY:-}
+      GoogleDrive__ClientId: ${GOOGLE_CLIENT_ID:-}
+      GoogleDrive__ClientSecret: ${GOOGLE_CLIENT_SECRET:-}
+      GoogleDrive__RefreshToken: ${GOOGLE_REFRESH_TOKEN:-}
+
+      FileStorage__RootPath: /data/storage
+    volumes:
+      - storage:/data/storage
+    ports:
+      # Bind to localhost only; put Nginx/Caddy in front for TLS.
+      # Change to "${API_BIND:-127.0.0.1}:8080:8080" to make the host configurable.
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  pgdata:
+  storage:

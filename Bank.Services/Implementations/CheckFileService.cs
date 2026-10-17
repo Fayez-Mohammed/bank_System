@@ -15,6 +15,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 namespace Bank.Services.Implementations;
 
@@ -32,14 +33,17 @@ public class CheckFileService : ICheckFileService
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
     private readonly ICheckPlateCacheService _cache;
+    private readonly IConfiguration _configuration;
 
     public CheckFileService(
-        ILogger<CheckFileService> logger, IUnitOfWork unit, AppDbContext dbContext, ICheckPlateCacheService cache)
+        ILogger<CheckFileService> logger, IUnitOfWork unit, AppDbContext dbContext, ICheckPlateCacheService cache
+        , IConfiguration configuration)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
         _cache = cache;
+        _configuration = configuration;
     }
 
     public async Task<ApiResponse<List<CheckFileSummaryDto>>> GetCheckFilesAsync(
@@ -183,7 +187,7 @@ public class CheckFileService : ICheckFileService
         await query.ExecuteUpdateAsync(setters => setters.SetProperty(f => f.IsActive, false), cancellationToken);
     }
 
-    private static async Task<int> BulkInsertCheckPlatesAsync(
+    private async Task<int> BulkInsertCheckPlatesAsync(
         AppDbContext dbContext, Guid checkFileId, List<List<string?>> dataRows, CancellationToken cancellationToken)
     {
         var table = new DataTable();
@@ -226,8 +230,8 @@ public class CheckFileService : ICheckFileService
 
         if (table.Rows.Count == 0) return 0;
 
-        var connectionString = dbContext.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+     ?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);

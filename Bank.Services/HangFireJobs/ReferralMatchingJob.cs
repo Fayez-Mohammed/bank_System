@@ -2,6 +2,7 @@ using Bank.DAL.Context;
 using Bank.Shared.Enums;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
@@ -14,11 +15,13 @@ public class ReferralMatchingJob
 {
     private readonly AppDbContext _dbContext;
     private readonly ILogger<ReferralMatchingJob> _logger;
+    private readonly IConfiguration _configuration;
 
-    public ReferralMatchingJob(AppDbContext dbContext, ILogger<ReferralMatchingJob> logger)
+    public ReferralMatchingJob(AppDbContext dbContext, ILogger<ReferralMatchingJob> logger, IConfiguration configuration)
     {
         _dbContext = dbContext;
         _logger = logger;
+        _configuration = configuration;
     }
 
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
@@ -38,8 +41,9 @@ public class ReferralMatchingJob
             return;
         }
 
-        var connectionString = _dbContext.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+?? throw new InvalidOperationException("Could not resolve the database connection string.");
+
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
