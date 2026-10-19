@@ -12,7 +12,8 @@ public record MapResultRowDto(
     string? RecorderName,
     string? LocationLink,
     double? Latitude,
-    double? Longitude);
+    double? Longitude,
+    string? DatafileName);
 
 public record MapResultDto(
     Guid ReferralJobId,

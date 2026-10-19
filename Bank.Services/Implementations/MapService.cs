@@ -7,8 +7,10 @@ using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.MapDTOs;
 using Bank.Shared.Enums;
+using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text;
 using System.Text.Json;
 
 namespace Bank.Services.Implementations;
@@ -103,7 +105,8 @@ public class MapService : IMapService
                 m.Location,
                 m.FoundRecordedAt,
                 RecorderName = m.HistoricalPlate.RecorderName,
-                Notes = m.HistoricalPlate.Notes
+                Notes = m.HistoricalPlate.Notes,
+                DatafileName = m.SourceDataFile.FileName
             })
             .ToListAsync(cancellationToken);
 
@@ -123,7 +126,7 @@ public class MapService : IMapService
 
             return new MapResultRowDto(
                 r.NormalizedPlate, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
-                r.Notes, r.FoundRecordedAt, r.RecorderName, r.Location, coords?.Latitude, coords?.Longitude);
+                r.Notes, r.FoundRecordedAt, r.RecorderName, r.Location, coords?.Latitude, coords?.Longitude, r.DatafileName);
         }).ToList();
 
         var carCount = rowDtos.Count(r => r.Latitude.HasValue && r.Longitude.HasValue);
@@ -148,8 +151,8 @@ public class MapService : IMapService
         if (existing is null)
         {
             existing = new MapResult { GroupId = groupId, UserId = currentUserId };
-          //  await _unit.Repository<MapResult>().AddAsync(existing);
-          await _dbContext.MapResults.AddAsync(existing, cancellationToken);
+            // await _unit.Repository<MapResult>().AddAsync(existing);
+            await _dbContext.MapResults.AddAsync(existing, cancellationToken);
         }
 
         existing.ReferralJobId = referralJobId;
@@ -207,76 +210,52 @@ public class MapService : IMapService
         var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
         var sheetIndex = request.SheetIndex ?? 0;
 
-        List<ExcelSheetInfo> sheetsInfo;
-        await using (var inspectStream = request.File.OpenReadStream())
-        {
-            sheetsInfo = ExcelSheetReader.GetSheetsInfo(inspectStream, extension);
-        }
-
-        var sheetInfo = sheetsInfo.FirstOrDefault(s => s.Index == sheetIndex) ?? sheetsInfo.FirstOrDefault();
-        if (sheetInfo is null) return ApiResponse<MapUploadedFileDto>.Fail("الملف فاضي.", null, 400);
-
-        List<ExcelSheetData> sheets;
+        // لو الملف Excel: بنقراه بـ ClosedXML (مش ExcelDataReader) عشان نقدر نلحق
+        // الرابط الحقيقي ورا أي hyperlink (زي عمود GPS اللي بيطلع "فتح الموقع" كنص
+        // ظاهر في ملفات تصدير الفرز بتاعتنا) بدل النص الظاهر بس. CSV مالهوش
+        // مفهوم hyperlink من الأساس، فبيفضل بياخد المسار القديم.
+        List<List<string?>> rawSheetRows;
         await using (var readStream = request.File.OpenReadStream())
         {
-            sheets = ExcelSheetReader.ReadSelectedSheets(readStream, extension, allSheets: false, new List<int> { sheetInfo.Index });
+            rawSheetRows = extension == ".csv"
+                ? ExcelSheetReader.ReadSelectedSheets(readStream, extension, allSheets: false, new List<int> { sheetIndex })
+                    .FirstOrDefault()?.Rows ?? new List<List<string?>>()
+                : ReadRowsPreservingHyperlinks(readStream, sheetIndex);
         }
 
-        var sheet = sheets.FirstOrDefault();
-        if (sheet is null || sheet.Rows.Count == 0) return ApiResponse<MapUploadedFileDto>.Fail("الملف فاضي.", null, 400);
-
-        var headerRowIdx = sheetInfo.HeaderRowIndex;
-        if (headerRowIdx < 0 || headerRowIdx >= sheet.Rows.Count)
-        {
-            return ApiResponse<MapUploadedFileDto>.Fail("مقدرناش نحدد صف الهيدر في الملف ده.", null, 422);
-        }
-
-        var headerRow = sheet.Rows[headerRowIdx];
-        var plateColumn = _columnDetector.DetectPlateColumn(headerRow, sheet.Rows.Skip(headerRowIdx + 1).Take(5));
-        if (plateColumn is null)
-        {
-            return ApiResponse<MapUploadedFileDto>.Fail("مقدرناش نحدد عمود رقم اللوحة في الملف ده.", null, 422);
-        }
-
-        var cols = DetectFixedColumns(headerRow, plateColumn.Value);
-        var dataRows = sheet.Rows.Skip(headerRowIdx + 1);
+        if (rawSheetRows.Count == 0) return ApiResponse<MapUploadedFileDto>.Fail("الملف فاضي.", null, 400);
 
         var rawRows = new List<RawMapRow>();
-        foreach (var row in dataRows)
+
+        // الملف ده عادة ناتج تصدير الفرز نفسه: أكتر من جدول في نفس الـ Sheet،
+        // كل جدول مسبوق بصف عنوان "📁 اسم الملف" وبعده صف هيدر خاص بيه، وبعد
+        // كده صفوف بيانات لحد صف فاضي أو العنوان التالي. كل الجداول بنفس الأعمدة.
+        var groups = ParseGroupedSheet(rawSheetRows);
+
+        if (groups.Count > 0)
         {
-            if (cols.PlateCol >= row.Count) continue;
-            var rawPlate = row[cols.PlateCol]?.Trim();
-            if (string.IsNullOrWhiteSpace(rawPlate)) continue;
-
-            string? Get(int idx) => idx != -1 && idx < row.Count ? row[idx]?.Trim() : null;
-
-            var fixedCols = new HashSet<int>
+            foreach (var group in groups)
             {
-                cols.PlateCol, cols.VehicleTypeCol, cols.DistrictCol, cols.StreetCol,
-                cols.GpsCol, cols.RecordedAtCol, cols.NotesCol, cols.RecorderNameCol
-            };
-
-            Dictionary<string, string?>? extra = null;
-            for (var i = 0; i < headerRow.Count && i < row.Count; i++)
+                rawRows.AddRange(ExtractRowsFromGroup(group.Headers, group.DataRows));
+            }
+        }
+        else
+        {
+            // Fallback: ملف بسيط بصف هيدر واحد بس (مش بصيغة التصدير المجمّع).
+            var headerRowIndex = ReferralHeaderRowDetector.Detect(rawSheetRows);
+            if (headerRowIndex < 0 || headerRowIndex >= rawSheetRows.Count)
             {
-                if (fixedCols.Contains(i)) continue;
-                var header = headerRow[i]?.Trim();
-                var value = row[i]?.Trim();
-                if (string.IsNullOrWhiteSpace(header) || string.IsNullOrWhiteSpace(value)) continue;
-
-                extra ??= new Dictionary<string, string?>();
-                extra[header] = value;
+                return ApiResponse<MapUploadedFileDto>.Fail("مقدرناش نحدد صف الهيدر في الملف ده.", null, 422);
             }
 
-            rawRows.Add(new RawMapRow(
-                rawPlate, Get(cols.VehicleTypeCol), Get(cols.DistrictCol), Get(cols.StreetCol),
-                Get(cols.NotesCol), Get(cols.RecorderNameCol), Get(cols.GpsCol), Get(cols.RecordedAtCol),
-                extra is null ? null : JsonSerializer.Serialize(extra)));
+            var headerRow = rawSheetRows[headerRowIndex];
+            var dataRows = rawSheetRows.Skip(headerRowIndex + 1).ToList();
+            rawRows.AddRange(ExtractRowsFromGroup(headerRow, dataRows));
         }
 
         if (rawRows.Count == 0)
         {
-            return ApiResponse<MapUploadedFileDto>.Fail("مفيش أي لوحات صالحة في الملف.", null, 422);
+            return ApiResponse<MapUploadedFileDto>.Fail("مقدرناش نلاقي أي لوحات صالحة في الملف.", null, 422);
         }
 
         var httpClient = _httpClientFactory.CreateClient("MapsLinkResolver");
@@ -347,8 +326,8 @@ public class MapService : IMapService
             await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation(
-                "Map file '{FileName}' uploaded ({Count} rows) by user {UserId} (workspace GroupId={GroupId})",
-                request.File.FileName, entities.Count, currentUserId, userScope.GroupId);
+                "Map file '{FileName}' uploaded ({Count} rows across {GroupCount} group(s)) by user {UserId} (workspace GroupId={GroupId})",
+                request.File.FileName, entities.Count, Math.Max(groups.Count, 1), currentUserId, userScope.GroupId);
 
             return ApiResponse<MapUploadedFileDto>.SuccessResponse(
                 BuildUploadedFileDto(newFile, entities), "تم رفع ملف الخريطة.", 201);
@@ -397,8 +376,156 @@ public class MapService : IMapService
         return new MapUploadedFileDto(file.Id, file.FileName, file.RowCount, carCount, unresolvedCount, file.UploadedAt, rowDtos);
     }
 
+    // ---------- قراءة الملف بـ ClosedXML — بتفضّل رابط الـ Hyperlink الحقيقي ----------
+
+    // على النص الظاهر في الخلية. ده اللي بيخلّي إعادة رفع ملف اتصدّر من WriteMatchedSheet
+    // (اللي بيكتب "فتح الموقع" كنص ظاهر ويحط الرابط الحقيقي كـ hyperlink منفصل)
+    // يرجّع الرابط الصح بدل النص.
+    private static List<List<string?>> ReadRowsPreservingHyperlinks(Stream stream, int sheetIndex)
+    {
+        using var workbook = new XLWorkbook(stream);
+        var worksheet = sheetIndex >= 0 && sheetIndex < workbook.Worksheets.Count
+            ? workbook.Worksheets.ElementAt(sheetIndex)
+            : workbook.Worksheets.First();
+
+        var rows = new List<List<string?>>();
+        var usedRange = worksheet.RangeUsed();
+        if (usedRange is null) return rows;
+
+        var firstRow = usedRange.FirstRow().RowNumber();
+        var lastRow = usedRange.LastRow().RowNumber();
+        var lastColumn = usedRange.LastColumn().ColumnNumber();
+
+        for (var r = firstRow; r <= lastRow; r++)
+        {
+            var row = new List<string?>(lastColumn);
+            for (var c = 1; c <= lastColumn; c++)
+            {
+                var cell = worksheet.Cell(r, c);
+
+                string? value;
+                if (cell.HasHyperlink && cell.GetHyperlink().ExternalAddress is not null)
+                {
+                    value = cell.GetHyperlink().ExternalAddress.ToString();
+                }
+                else
+                {
+                    var text = cell.GetString();
+                    value = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+                }
+
+                row.Add(value);
+            }
+            rows.Add(row);
+        }
+
+        return rows;
+    }
+
+    // ---------- تقسيم الشيت لجداول (📁 عنوان -> هيدر -> بيانات -> فاصل فاضي) ----------
+
+    private sealed record SheetGroup(string GroupName, List<string?> Headers, List<List<string?>> DataRows);
+
+    private static List<SheetGroup> ParseGroupedSheet(List<List<string?>> allRows)
+    {
+        var groups = new List<SheetGroup>();
+        var i = 0;
+
+        while (i < allRows.Count)
+        {
+            if (IsGroupTitleRow(allRows[i], out var groupName))
+            {
+                var headerRowIndex = i + 1;
+                if (headerRowIndex >= allRows.Count) break;
+
+                var headers = allRows[headerRowIndex];
+                var dataRows = new List<List<string?>>();
+
+                var j = headerRowIndex + 1;
+                while (j < allRows.Count && !IsBlankRow(allRows[j]) && !IsGroupTitleRow(allRows[j], out _))
+                {
+                    dataRows.Add(allRows[j]);
+                    j++;
+                }
+
+                groups.Add(new SheetGroup(groupName, headers, dataRows));
+                i = j + 1; // تخطّي صف الفاصل الفاضي لو موجود
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return groups;
+    }
+
+    // صف العنوان دايمًا خلية واحدة غير فاضية فيها الرمز 📁 (نفس شكل WriteMatchedSheet بالظبط)
+    private static bool IsGroupTitleRow(List<string?> row, out string groupName)
+    {
+        groupName = string.Empty;
+
+        var nonEmpty = row.Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
+        if (nonEmpty.Count != 1) return false;
+
+        var text = nonEmpty[0]!.Trim();
+        if (!text.Contains("📁"))   return false;
+
+        groupName = text.Replace("📁", string.Empty).Trim();
+        return true;
+    }
+
+    private static bool IsBlankRow(List<string?> row) => row.All(c => string.IsNullOrWhiteSpace(c));
+
+    // بياخد هيدر وصفوف بيانات جدول واحد (سواء جاية من جروب أو من ملف بسيط)
+    // ويطلّع منها RawMapRow، مع فصل الأعمدة الثابتة عن الأعمدة المتغيرة.
+    private List<RawMapRow> ExtractRowsFromGroup(List<string?> headerRow, List<List<string?>> dataRows)
+    {
+        var result = new List<RawMapRow>();
+
+        var plateColumn = _columnDetector.DetectPlateColumn(headerRow, dataRows.Take(5));
+        if (plateColumn is null) return result; // جدول من غير عمود لوحة واضح — يتجاهل بهدوء
+
+        var cols = DetectFixedColumns(headerRow, plateColumn.Value);
+
+        var fixedCols = new HashSet<int>
+        {
+            cols.PlateCol, cols.VehicleTypeCol, cols.DistrictCol, cols.StreetCol,
+            cols.GpsCol, cols.RecordedAtCol, cols.NotesCol, cols.RecorderNameCol
+        };
+
+        foreach (var row in dataRows)
+        {
+            if (cols.PlateCol >= row.Count) continue;
+            var rawPlate = row[cols.PlateCol]?.Trim();
+            if (string.IsNullOrWhiteSpace(rawPlate)) continue;
+
+            string? Get(int idx) => idx != -1 && idx < row.Count ? row[idx]?.Trim() : null;
+
+            Dictionary<string, string?>? extra = null;
+            for (var i = 0; i < headerRow.Count && i < row.Count; i++)
+            {
+                if (fixedCols.Contains(i)) continue;
+                var header = headerRow[i]?.Trim();
+                var value = row[i]?.Trim();
+                if (string.IsNullOrWhiteSpace(header) || string.IsNullOrWhiteSpace(value)) continue;
+
+                extra ??= new Dictionary<string, string?>();
+                extra[header] = value;
+            }
+
+            result.Add(new RawMapRow(
+                rawPlate, Get(cols.VehicleTypeCol), Get(cols.DistrictCol), Get(cols.StreetCol),
+                Get(cols.NotesCol), Get(cols.RecorderNameCol), Get(cols.GpsCol), Get(cols.RecordedAtCol),
+                extra is null ? null : JsonSerializer.Serialize(extra)));
+        }
+
+        return result;
+    }
+
     // نفس كلمات AssignColumn في DataFileImportJob بالظبط — عشان نفس أسماء
-    // الأعمدة في كل حتة في النظام.
+    // الأعمدة في كل حتة في النظام. بنشيل أي تشكيل عربي (شدة، فتحة...) من الهيدر
+    // الأول، عشان هيدرات زي "اسم المسجّل" (فيها شدّة) تتطابق صح مع "المسجل".
     private static FixedColumnMap DetectFixedColumns(List<string?> headerRow, int plateColumn)
     {
         var map = new FixedColumnMap { PlateCol = plateColumn };
@@ -407,7 +534,7 @@ public class MapService : IMapService
         {
             if (i == plateColumn) continue;
 
-            var header = headerRow[i]?.Trim() ?? string.Empty;
+            var header = StripArabicDiacritics(headerRow[i]?.Trim() ?? string.Empty);
             if (header.Length == 0) continue;
 
             if (header.Contains("ملاحظ")) map.NotesCol = i;
@@ -420,6 +547,17 @@ public class MapService : IMapService
         }
 
         return map;
+    }
+
+    private static string StripArabicDiacritics(string input)
+    {
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (ch >= '\u064B' && ch <= '\u065F') continue; // تشكيل عربي: فتحة، ضمة، كسرة، شدّة، سكون...
+            sb.Append(ch);
+        }
+        return sb.ToString();
     }
 
     private static string? ValidateUploadedFile(Microsoft.AspNetCore.Http.IFormFile? file)
