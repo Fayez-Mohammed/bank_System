@@ -1,3 +1,5 @@
+using Bank.Services.Interfaces.ILiveCheck;
+
 namespace Bank.Services.Interfaces;
 
 /// <summary>
@@ -10,8 +12,10 @@ public interface ILiveCheckAiSession : IAsyncDisposable
 {
     Task SendAudioChunkAsync(byte[] chunk, CancellationToken cancellationToken = default);
 
-    /// <summary>بيستريم النتايج أول ما توصل — استخدمها بـ await foreach.</summary>
-    IAsyncEnumerable<AiPlateDetectedEvent> ReadDetectionsAsync(CancellationToken cancellationToken = default);
+    /// <summary>بيستريم النتايج أول ما توصل — استخدمها بـ await foreach. بترجع AiPlateEvent
+    /// (AiPlateEvents.cs) اللي ممكن يكون Detected/Correction/Replacement — الـ Hub بيفرّق
+    /// بينهم بـ pattern matching.</summary>
+    IAsyncEnumerable<AiPlateEvent> ReadDetectionsAsync(CancellationToken cancellationToken = default);
 
     Task CloseAsync(CancellationToken cancellationToken = default);
 }

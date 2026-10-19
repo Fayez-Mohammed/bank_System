@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Bank.Services.Interfaces;
+using Bank.Services.Interfaces.ILiveCheck;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
@@ -121,11 +122,36 @@ public class LiveCheckHub : Hub
     {
         try
         {
-            await foreach (var detection in state.AiSession.ReadDetectionsAsync(state.ListenCts.Token))
+            await foreach (var plateEvent in state.AiSession.ReadDetectionsAsync(state.ListenCts.Token))
             {
-                var result = await _sessionService.ProcessDetectionAsync(
-                    state.SessionId, state.UserId, state.GroupId, state.CheckFileId, state.District, state.Street,
-                    state.LastLatitude, state.LastLongitude, detection, Bank.Shared.Enums.CheckType.Live, CancellationToken.None);
+                // الـ ٣ أنواع بترجع نفس شكل الـ DTO (LiveCheckPlateResultDto) وبتتبعت
+                // كلهم تحت نفس إيفنت "PlateChecked" — الفلاتر بيعمل upsert بالـ Id
+                // اللي جوّه النتيجة: Id جديد = صف جديد، Id موجود قبل كده = تحديث لصف
+                // ظاهر بالفعل (ده حال الـ correction والـ replacement).
+                var result = plateEvent switch
+                {
+                    PlateDetectedEvent detected => await _sessionService.ProcessDetectionAsync(
+                        state.SessionId, state.UserId, state.GroupId, state.CheckFileId, state.District, state.Street,
+                        state.LastLatitude, state.LastLongitude,
+                        new AiPlateDetectedEvent(detected.PlateNumber, detected.VehicleType, detected.TimestampMs),
+                        Bank.Shared.Enums.CheckType.Live, CancellationToken.None),
+
+                    PlateCorrectionEvent correction => await _sessionService.ProcessCorrectionAsync(
+                        state.SessionId, state.CheckFileId, correction.NewPlateNumber, correction.VehicleType, CancellationToken.None),
+
+                    PlateReplacementEvent replacement => await _sessionService.ProcessReplacementAsync(
+                        state.SessionId, state.CheckFileId, replacement.OldPlateNumber, replacement.NewPlateNumber,
+                        replacement.VehicleType, CancellationToken.None),
+
+                    _ => null
+                };
+
+                if (result is null)
+                {
+                    // الـ Service بيسجّل اللوج بنفسه لو رفض الحدث (مثلًا تصحيح وصل
+                    // من غير اكتشاف سابق، أو replacement للوحة مش موجودة في الجلسة).
+                    continue;
+                }
 
                 await _hubContext.Clients.Client(connectionId).SendAsync("PlateChecked", result);
             }

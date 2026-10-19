@@ -16,6 +16,19 @@ public interface ILiveCheckSessionService
         double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
         CancellationToken cancellationToken = default);
 
+    // الـ AI بيبعت تصحيح لآخر لوحة اتسمعت في الجلسة (من غير ما يحدد رقمها
+    // القديم). null = مفيش لوحة سابقة في الجلسة يتصحّح عليها (بيتسجّل تحذير
+    // في اللوج، مفيش حاجة تترجع للفلاتر).
+    Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
+        Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default);
+
+    // الـ AI بيبعت استبدال برقم اللوحة القديم صراحة — بندوّر عليها جوه نفس
+    // الـ Session بس (تحقق أمان: مينفعش يعدّل سجل جلسة تانية). null = مفيش
+    // سجل بالرقم القديم ده في الجلسة دي.
+    Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
+        Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
+        CancellationToken cancellationToken = default);
+
     Task CompleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task MarkSessionFailedAsync(Guid sessionId, string error, CancellationToken cancellationToken = default);
 

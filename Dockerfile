@@ -53,6 +53,14 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
+# Tesseract 5.2's managed loader expects these names in the x64 directory.
+# Ubuntu supplies the same native libraries using system SONAMEs.
+RUN test -r /lib/x86_64-linux-gnu/liblept.so.5 \
+ && test -r /lib/x86_64-linux-gnu/libtesseract.so.5 \
+ && mkdir -p /app/x64 \
+ && ln -sf /lib/x86_64-linux-gnu/liblept.so.5 /app/x64/libleptonica-1.82.0.so \
+ && ln -sf /lib/x86_64-linux-gnu/libtesseract.so.5 /app/x64/libtesseract50.so \
+ && ln -sf /lib/x86_64-linux-gnu/libdl.so.2 /usr/lib/x86_64-linux-gnu/libdl.so
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_EnableDiagnostics=0

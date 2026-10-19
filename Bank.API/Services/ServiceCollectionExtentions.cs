@@ -111,6 +111,11 @@ namespace Bank.API.Services
             services.AddScoped<ICertificateService, CertificateService>();
             services.AddScoped<CertificateSyncJob>();
             services.AddScoped<CertificateExtractionJob>();
+            services.AddScoped<IMapService, MapService>();
+
+            // لو مش مسجّل بالفعل من الباتش اللي فات (استخراج الإحداثيات):
+            services.AddHttpClient("MapsLinkResolver", client => client.Timeout = TimeSpan.FromSeconds(5))
+                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
             // وتأكد إن الـ queue "certificates" في options.Queues بتاع AddHangfireServer
 
             return services;

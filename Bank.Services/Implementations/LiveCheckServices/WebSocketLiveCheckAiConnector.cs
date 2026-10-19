@@ -4,15 +4,17 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Bank.Services.Interfaces;
+using Bank.Services.Interfaces.ILiveCheck;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Bank.Services.Implementations;
 
 /// <summary>
-/// التنفيذ الحقيقي بتاع الاتصال بموديل صاحبك — لما يخلص ويديك الـ URL/handshake
-/// الحقيقي، الملف ده بس اللي هيتعدّل. شكل الرسالة الحالي مطابق لللي أكّده:
-/// { "type": "plate_detected", "plate_number": "...", "vehicle_type": "...", "timestamp_ms": ... }
+/// التنفيذ الحقيقي بتاع الاتصال بموديل صاحبك. الاتصال بيستقبل ٣ أنواع رسايل
+/// على نفس الـ WebSocket (plate_detected, plate_correction, plate_replacement)
+/// ويحوّلهم لأحداث مختلفة (AiPlateEvent hierarchy) بدل ما يحاول يضغطهم كلهم
+/// في شكل واحد.
 /// </summary>
 public class WebSocketLiveCheckAiConnector : ILiveCheckAiConnector
 {
@@ -54,7 +56,7 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
         await _socket.SendAsync(chunk, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
     }
 
-    public async IAsyncEnumerable<AiPlateDetectedEvent> ReadDetectionsAsync(
+    public async IAsyncEnumerable<AiPlateEvent> ReadDetectionsAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var buffer = new byte[8192];
@@ -63,6 +65,7 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
         {
             using var messageStream = new MemoryStream();
             WebSocketReceiveResult result;
+            var isNonTextMessage = false;
 
             do
             {
@@ -73,14 +76,24 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
                     yield break;
                 }
 
+                if (result.MessageType != WebSocketMessageType.Text)
+                {
+                    // الرسايل النصية (JSON) بس هي اللي فيها أحداث — أي حاجة تانية
+                    // (binary غلط جاي على نفس القناة مثلًا) بنتجاهلها بهدوء.
+                    _logger.LogWarning("Ignoring unexpected non-text AI message.");
+                    isNonTextMessage = true;
+                    break;
+                }
+
                 messageStream.Write(buffer, 0, result.Count);
             }
             while (!result.EndOfMessage);
 
+            if (isNonTextMessage) continue;
+
             var json = Encoding.UTF8.GetString(messageStream.ToArray());
 
-            AiRawMessage? message = null;
-            var parseFailed = false;
+            AiRawMessage? message;
             try
             {
                 message = JsonSerializer.Deserialize<AiRawMessage>(json, JsonOptions);
@@ -88,17 +101,46 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
             catch (JsonException ex)
             {
                 _logger.LogWarning(ex, "Could not parse AI message: {Json}", json);
-                parseFailed = true;
-            }
-
-            if (parseFailed || message is null || message.Type != "plate_detected" || string.IsNullOrWhiteSpace(message.PlateNumber))
-            {
-                // ⭐ بنتجاهل أي رسالة مش "plate_detected" — لو صاحبك ضاف أنواع
-                // تانية بعدين (session_ready, error...) الكود هنا مش هينكسر.
                 continue;
             }
 
-            yield return new AiPlateDetectedEvent(message.PlateNumber!, message.VehicleType, message.TimestampMs ?? 0);
+            if (message?.Type is null) continue;
+
+            var timestamp = message.TimestampMs ?? 0;
+
+            switch (message.Type.ToLowerInvariant())
+            {
+                case "plate_detected":
+                    if (!string.IsNullOrWhiteSpace(message.PlateNumber))
+                    {
+                        yield return new PlateDetectedEvent(message.PlateNumber, message.VehicleType, timestamp);
+                    }
+                    break;
+
+                case "plate_correction":
+                    if (!string.IsNullOrWhiteSpace(message.NewPlateNumber))
+                    {
+                        yield return new PlateCorrectionEvent(message.NewPlateNumber, message.VehicleType, timestamp);
+                    }
+                    break;
+
+                case "plate_replacement":
+                    if (!string.IsNullOrWhiteSpace(message.OldPlateNumber) && !string.IsNullOrWhiteSpace(message.NewPlateNumber))
+                    {
+                        yield return new PlateReplacementEvent(message.OldPlateNumber, message.NewPlateNumber, message.VehicleType, timestamp);
+                    }
+                    break;
+
+                case "error":
+                    _logger.LogWarning("AI reported an error: {Message}", message.Message);
+                    break;
+
+                default:
+                    // ⭐ أي نوع تاني (session_ready، إلخ) بيتتجاهل بهدوء، مش error —
+                    // لو صاحبك ضاف نوع جديد بعدين الكود هنا مش هينكسر.
+                    _logger.LogDebug("Ignoring unsupported AI event type: {Type}", message.Type);
+                    break;
+            }
         }
     }
 
@@ -121,6 +163,9 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
     private record AiRawMessage(
         [property: JsonPropertyName("type")] string? Type,
         [property: JsonPropertyName("plate_number")] string? PlateNumber,
+        [property: JsonPropertyName("new_plate_number")] string? NewPlateNumber,
+        [property: JsonPropertyName("old_plate_number")] string? OldPlateNumber,
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
-        [property: JsonPropertyName("timestamp_ms")] int? TimestampMs);
+        [property: JsonPropertyName("timestamp_ms")] int? TimestampMs,
+        [property: JsonPropertyName("message")] string? Message);
 }

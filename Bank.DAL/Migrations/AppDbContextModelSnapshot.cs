@@ -888,6 +888,181 @@ namespace Bank.DAL.Migrations
                     b.ToTable("manual_checks", (string)null);
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.MapResult", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("CarCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("car_count");
+
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("group_id");
+
+                    b.Property<DateTime>("PreparedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("prepared_at");
+
+                    b.Property<Guid>("ReferralJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("referral_job_id");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("result_json");
+
+                    b.Property<int>("UnresolvedCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("unresolved_count");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupId")
+                        .IsUnique()
+                        .HasFilter("group_id IS NOT NULL");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("group_id IS NULL");
+
+                    b.ToTable("map_results", (string)null);
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.MapUploadedFile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("file_name");
+
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("group_id");
+
+                    b.Property<int>("RowCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("row_count");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("uploaded_at");
+
+                    b.Property<Guid>("UploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupId")
+                        .IsUnique()
+                        .HasFilter("group_id IS NOT NULL");
+
+                    b.HasIndex("UploadedBy")
+                        .IsUnique()
+                        .HasFilter("group_id IS NULL");
+
+                    b.ToTable("map_uploaded_files", (string)null);
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.MapUploadedPlateRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("District")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("district");
+
+                    b.Property<string>("ExtraDataJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("extra_data_json");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("double precision")
+                        .HasColumnName("latitude");
+
+                    b.Property<string>("LocationLink")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("location_link");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("double precision")
+                        .HasColumnName("longitude");
+
+                    b.Property<Guid>("MapUploadedFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("map_uploaded_file_id");
+
+                    b.Property<string>("NormalizedPlate")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("normalized_plate");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("RawPlate")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("raw_plate");
+
+                    b.Property<string>("RecordedAt")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<string>("RecorderName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("recorder_name");
+
+                    b.Property<string>("Street")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("street");
+
+                    b.Property<string>("VehicleType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("vehicle_type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MapUploadedFileId");
+
+                    b.HasIndex("NormalizedPlate");
+
+                    b.ToTable("map_uploaded_plate_rows", (string)null);
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.MatchResult", b =>
                 {
                     b.Property<long>("Id")
@@ -1892,6 +2067,17 @@ namespace Bank.DAL.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.MapUploadedPlateRow", b =>
+                {
+                    b.HasOne("Bank.DAL.Models.SystemModels.MapUploadedFile", "MapUploadedFile")
+                        .WithMany("Rows")
+                        .HasForeignKey("MapUploadedFileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MapUploadedFile");
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.MatchResult", b =>
                 {
                     b.HasOne("Bank.DAL.Models.SystemModels.HistoricalPlate", "HistoricalPlate")
@@ -2155,6 +2341,11 @@ namespace Bank.DAL.Migrations
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.HistoricalPlate", b =>
                 {
                     b.Navigation("MatchResults");
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.MapUploadedFile", b =>
+                {
+                    b.Navigation("Rows");
                 });
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.RecordingSession", b =>

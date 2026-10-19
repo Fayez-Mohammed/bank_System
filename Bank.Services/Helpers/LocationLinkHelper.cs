@@ -3,7 +3,7 @@ using NetTopologySuite.Geometries;
 namespace Bank.Services.Helpers;
 
 
-public static class LocationLinkHelper
+public static partial class LocationLinkHelper
 {
     public static string? ToGoogleMapsLink(Point? point)
     {

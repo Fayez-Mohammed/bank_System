@@ -33,7 +33,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     => Set<RecordingArchivePlate>();
  
     public DbSet<Certificate> Certificates => Set<Certificate>();
-
+    public DbSet<MapResult> MapResults => Set<MapResult>();
+    public DbSet<MapUploadedFile> MapUploadedFiles => Set<MapUploadedFile>();
+    public DbSet<MapUploadedPlateRow> MapUploadedPlateRows => Set<MapUploadedPlateRow>();
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Npgsql بيرفض أي DateTime مش UTC في أعمدة timestamptz، فبنثبّت الـ Kind

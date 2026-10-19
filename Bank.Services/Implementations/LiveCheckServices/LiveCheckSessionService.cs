@@ -9,7 +9,6 @@ using Bank.Shared.DTOs.LiveCheckDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Bank.Services.Implementations;
@@ -19,14 +18,12 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     private readonly ILogger<LiveCheckSessionService> _logger;
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
-    private readonly IConfiguration _configuration;
 
-    public LiveCheckSessionService(ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext, IConfiguration configuration)
+    public LiveCheckSessionService(ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
-        _configuration = configuration;
     }
 
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
@@ -114,6 +111,101 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return new LiveCheckPlateResultDto(log.Id, log.NormalizedPlate, log.VehicleType, log.IsMatched, log.Location, log.CheckedAt);
+    }
+
+    // الـ AI أحيانًا بيبعت "تصحيح" لآخر لوحة اتسمعت (من غير ما يحدد رقمها القديم —
+    // زي لما يسمع صدى/تكرار ويحتاج يظبط آخر قراءة). بناخد آخر LiveCheckLog في نفس
+    // الـ Session (بالـ Id، أضمن من CheckedAt لو فيه تساوي بالميلي ثانية) ونعدّله
+    // في مكانه، ونعيد الـ Matching لأن رقم اللوحة اتغيّر.
+    public async Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
+        Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default)
+    {
+        var lastLog = await _dbContext.LiveCheckLogs
+            .Where(l => l.CheckSessionId == sessionId)
+            .OrderByDescending(l => l.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (lastLog is null)
+        {
+            _logger.LogWarning(
+                "Plate correction received for CheckSession {SessionId} but no prior detection exists in this session — ignoring",
+                sessionId);
+            return null;
+        }
+
+        var normalized = PlateNormalizer.Normalize(newPlateNumber);
+
+        long? matchedCheckPlateId = null;
+        if (checkFileId.HasValue)
+        {
+            matchedCheckPlateId = await _dbContext.CheckPlates
+                .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == normalized)
+                .Select(cp => (long?)cp.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        lastLog.RawPlate = newPlateNumber;
+        lastLog.NormalizedPlate = normalized;
+        if (!string.IsNullOrWhiteSpace(vehicleType)) lastLog.VehicleType = vehicleType;
+        lastLog.IsMatched = matchedCheckPlateId.HasValue;
+        lastLog.MatchedCheckPlateId = matchedCheckPlateId;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Plate correction applied: CheckSession {SessionId}, LiveCheckLog {LogId} corrected to {Plate}",
+            sessionId, lastLog.Id, normalized);
+
+        return new LiveCheckPlateResultDto(lastLog.Id, lastLog.NormalizedPlate, lastLog.VehicleType, lastLog.IsMatched, lastLog.Location, lastLog.CheckedAt);
+    }
+
+    // الـ "استبدال" بيحدد رقم اللوحة القديم صراحة، فبندوّر على سجل بنفس اللوحة
+    // دي **جوه نفس الـ Session بس** (مش أي جلسة تانية لنفس اليوزر) — ده تحقق
+    // الأمان المطلوب: مينفعش الـ AI يعدّل سجل جلسة تانية خالص. لو ملقيناش سجل
+    // مطابق، بنرفض الطلب ونسجّل تحذير بدل ما نضيف سجل جديد باسم غلط.
+    public async Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
+        Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
+        CancellationToken cancellationToken = default)
+    {
+        var oldNormalized = PlateNormalizer.Normalize(oldPlateNumber);
+
+        var targetLog = await _dbContext.LiveCheckLogs
+            .Where(l => l.CheckSessionId == sessionId && l.NormalizedPlate == oldNormalized)
+            .OrderByDescending(l => l.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (targetLog is null)
+        {
+            _logger.LogWarning(
+                "Plate replacement received for CheckSession {SessionId}: old plate {OldPlate} not found in this session — ignoring",
+                sessionId, oldNormalized);
+            return null;
+        }
+
+        var newNormalized = PlateNormalizer.Normalize(newPlateNumber);
+
+        long? matchedCheckPlateId = null;
+        if (checkFileId.HasValue)
+        {
+            matchedCheckPlateId = await _dbContext.CheckPlates
+                .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == newNormalized)
+                .Select(cp => (long?)cp.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        targetLog.RawPlate = newPlateNumber;
+        targetLog.NormalizedPlate = newNormalized;
+        if (!string.IsNullOrWhiteSpace(vehicleType)) targetLog.VehicleType = vehicleType;
+        targetLog.IsMatched = matchedCheckPlateId.HasValue;
+        targetLog.MatchedCheckPlateId = matchedCheckPlateId;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Plate replacement applied: CheckSession {SessionId}, LiveCheckLog {LogId} replaced {OldPlate} -> {NewPlate}",
+            sessionId, targetLog.Id, oldNormalized, newNormalized);
+
+        return new LiveCheckPlateResultDto(targetLog.Id, targetLog.NormalizedPlate, targetLog.VehicleType, targetLog.IsMatched, targetLog.Location, targetLog.CheckedAt);
     }
 
     public async Task CompleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
