@@ -56,6 +56,13 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
         await _socket.SendAsync(chunk, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
     }
 
+    public async Task SendStopAsync(CancellationToken cancellationToken = default)
+    {
+        if (_socket.State != WebSocketState.Open) return;
+        var stop = Encoding.UTF8.GetBytes("{\"type\":\"stop\"}");
+        await _socket.SendAsync(stop, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+    }
+
     public async IAsyncEnumerable<AiPlateEvent> ReadDetectionsAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -146,7 +153,8 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
 
     public async Task CloseAsync(CancellationToken cancellationToken = default)
     {
-        if (_socket.State == WebSocketState.Open)
+        // CloseReceived = الـ AI قفل من ناحيته بعد الـ stop — بنكمّل الـ handshake بس.
+        if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
         {
             await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", cancellationToken);
         }

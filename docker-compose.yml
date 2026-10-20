@@ -64,7 +64,15 @@ services:
       GoogleDrive__ClientSecret: ${GOOGLE_CLIENT_SECRET:-}
       GoogleDrive__RefreshToken: ${GOOGLE_REFRESH_TOKEN:-}
 
+      # Plate AI server (plate_model). Inside the container "localhost" is the API itself,
+      # so set these in .env to the AI server's real address.
+      AiService__BaseUrl: ${AI_BASE_URL:-http://host.docker.internal:8000}
+      LiveCheckAi__WebSocketUrl: ${AI_WS_URL:-ws://host.docker.internal:8000/ws/live-check}
+
       FileStorage__RootPath: /data/storage
+    extra_hosts:
+      # lets the default AI address above reach an AI server running on the Docker host (Linux needs this)
+      - "host.docker.internal:host-gateway"
     volumes:
       - storage:/data/storage
     ports:
