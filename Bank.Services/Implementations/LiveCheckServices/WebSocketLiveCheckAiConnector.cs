@@ -15,6 +15,13 @@ namespace Bank.Services.Implementations;
 /// على نفس الـ WebSocket (plate_detected, plate_correction, plate_replacement)
 /// ويحوّلهم لأحداث مختلفة (AiPlateEvent hierarchy) بدل ما يحاول يضغطهم كلهم
 /// في شكل واحد.
+///
+/// سيرفر الـ AI (plate_model) لما المتكلم يقول «تعديل»، القاعدة: هل الـ Backend استلم اللوحة الغلط ولا لأ؟
+/// - لسه ماستلمهاش (مثلًا «لوحة1 تعديل لوحة2» في نفس النَفَس): السيرفر بيشيل لوحة1 وبيبعت لوحة2 بس
+///   كـ plate_detected عادي — هي لوحة جديدة بالنسبة للـ Backend.
+/// - استلمها بالفعل (نَفَس قبل كده، أو اتبعتت بدري وهو لسه بيتكلم): plate_replacement (القديمة ← الجديدة).
+/// السيرفر عمره ما بيبعت plate_correction: هي بتعدّل آخر لوحة في الجلسة، ودي مش دايمًا الغلط
+/// (ممكن التعديل يكون للوحة من ٢-٣ لوحات فاتت) — يعني ممكن تمسح لوحة صح. الـ case بتاعها فاضل هنا للتوافق بس.
 /// </summary>
 public class WebSocketLiveCheckAiConnector : ILiveCheckAiConnector
 {
