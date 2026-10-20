@@ -26,19 +26,24 @@ public class DataFileService : IDataFileService
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorageService;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IPermissionService _permissions;
+
+    private const string NoDataFilePermissionMessage = "ليس لديك صلاحية على ملف الداتا ده.";
 
     public DataFileService(
         ILogger<DataFileService> logger,
         IUnitOfWork unit,
         AppDbContext context,
         IFileStorageService fileStorageService,
-        IBackgroundJobClient backgroundJobClient)
+        IBackgroundJobClient backgroundJobClient,
+        IPermissionService permissions)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = context;
         _fileStorageService = fileStorageService;
         _backgroundJobClient = backgroundJobClient;
+        _permissions = permissions;
     }
     public async Task<ApiResponse<DataFileImportStatusDto>> GetImportStatusAsync(
     Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
@@ -104,6 +109,11 @@ public class DataFileService : IDataFileService
         var userScope = await ResolveUserScopeAsync(uploaderId, cancellationToken);
         if (userScope == null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
 
+        if (!await _permissions.CanUploadDataFilesAsync(uploaderId, cancellationToken))
+        {
+            return ApiResponse<Guid>.Fail("ليس لديك صلاحية رفع ملفات الداتا.", null, StatusCodes.Status403Forbidden);
+        }
+
         var subFolder = userScope.GroupId.HasValue
             ? $"groups/{userScope.GroupId.Value}"
             : $"users/{uploaderId}";
@@ -149,22 +159,25 @@ public class DataFileService : IDataFileService
             return ApiResponse<bool>.Fail(validationError);
         }
 
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope == null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var dataFile = await _dbContext.DataFiles
             .AsNoTracking()
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, dataFileId), cancellationToken);
+            .FirstOrDefaultAsync(f => f.Id == dataFileId, cancellationToken);
 
         if (dataFile is null)
         {
             _logger.LogWarning("Append attempted on missing DataFile {DataFileId}", dataFileId);
-            return ApiResponse<bool>.Fail("الملف غير موجود.");
+            return ApiResponse<bool>.Fail("الملف غير موجود.", null, StatusCodes.Status404NotFound);
         }
 
-        var appendFolder = userScope.GroupId.HasValue
-            ? $"groups/{userScope.GroupId.Value}/appends/{dataFileId}"
-            : $"users/{currentUserId}/appends/{dataFileId}";
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            _logger.LogWarning("Append denied on DataFile {DataFileId} for user {UserId}", dataFileId, currentUserId);
+            return ApiResponse<bool>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
+        }
+
+        var appendFolder = dataFile.GroupId.HasValue
+            ? $"groups/{dataFile.GroupId.Value}/appends/{dataFileId}"
+            : $"users/{dataFile.OwnerId}/appends/{dataFileId}";
 
         await using var stream = request.File.OpenReadStream();
         var appendStoragePath = await _fileStorageService.SaveAsync(
@@ -253,27 +266,18 @@ public class DataFileService : IDataFileService
         Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
 
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope == null)
-        {
-            return ApiResponse<bool>.Fail("المستخدم غير موجود.", null, StatusCodes.Status404NotFound);
-        }
-
-        var query = _dbContext.DataFiles.AsQueryable();
-
-        query = userScope.Role switch
-        {
-            UserRole.SuperAdmin => query.Where(f => f.Id == dataFileId),
-            UserRole.Admin when userScope.GroupId.HasValue => query.Where(f => f.Id == dataFileId && f.GroupId == userScope.GroupId.Value),
-            _ => query.Where(ScopeFilter(userScope.GroupId, currentUserId, dataFileId))
-        };
-
-        var dataFile = await query.FirstOrDefaultAsync(cancellationToken);
+        var dataFile = await _dbContext.DataFiles.FirstOrDefaultAsync(f => f.Id == dataFileId, cancellationToken);
 
         if (dataFile is null)
         {
             _logger.LogWarning("Delete attempted on missing DataFile {DataFileId} by user {UserId}", dataFileId, currentUserId);
             return ApiResponse<bool>.Fail("الملف غير موجود.", null, StatusCodes.Status404NotFound);
+        }
+
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            _logger.LogWarning("Delete denied on DataFile {DataFileId} for user {UserId}", dataFileId, currentUserId);
+            return ApiResponse<bool>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
         }
 
         dataFile.IsActiveForFiltering = false;
@@ -291,17 +295,19 @@ public class DataFileService : IDataFileService
     public async Task<(Stream Stream, string ContentType, string FileName)> DownloadAsync(
         Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope == null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
-
         var dataFile = await _dbContext.DataFiles
             .AsNoTracking()
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, dataFileId), cancellationToken);
+            .FirstOrDefaultAsync(f => f.Id == dataFileId, cancellationToken);
 
         if (dataFile is null)
         {
             _logger.LogWarning("Download attempted on missing DataFile {DataFileId}", dataFileId);
             throw new KeyNotFoundException("الملف غير موجود.");
+        }
+
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException(NoDataFilePermissionMessage);
         }
 
         var stream = await _fileStorageService.OpenReadAsync(dataFile.StoragePath, cancellationToken);
@@ -318,9 +324,6 @@ public class DataFileService : IDataFileService
             return ApiResponse<UpdateHistoricalPlateResponseDto>.Fail("رقم اللوحة مطلوب.", null, 400);
         }
 
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope == null) return ApiResponse<UpdateHistoricalPlateResponseDto>.Fail("المستخدم غير موجود.");
-
         var plate = await _dbContext.HistoricalPlates
             .Include(h => h.DataFile)
             .FirstOrDefaultAsync(h => h.Id == historicalPlateId, cancellationToken);
@@ -330,16 +333,12 @@ public class DataFileService : IDataFileService
             return ApiResponse<UpdateHistoricalPlateResponseDto>.Fail("اللوحة غير موجودة.", null, 404);
         }
 
-        var inScope = userScope.GroupId.HasValue
-            ? plate.DataFile.GroupId == userScope.GroupId.Value
-            : plate.DataFile.GroupId == null && plate.DataFile.OwnerId == currentUserId;
-
-        if (!inScope)
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, plate.DataFileId, cancellationToken))
         {
             _logger.LogWarning(
-                "Update attempted on out-of-scope HistoricalPlate {HistoricalPlateId} by user {UserId}",
+                "Update denied on HistoricalPlate {HistoricalPlateId} by user {UserId}",
                 historicalPlateId, currentUserId);
-            return ApiResponse<UpdateHistoricalPlateResponseDto>.Fail("اللوحة غير موجودة.", null, 404);
+            return ApiResponse<UpdateHistoricalPlateResponseDto>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
         }
 
         var normalized = PlateNormalizer.Normalize(dto.RawPlate);

@@ -32,7 +32,7 @@ public class ReferralMatchingJob
         var job = await _dbContext.ReferralJobs
             .AsNoTracking()
             .Where(j => j.Id == referralJobId)
-            .Select(j => new { j.FilterType, j.GroupId, j.UserId })
+            .Select(j => new { j.FilterType, j.GroupId, j.UserId, j.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (job is null)
@@ -55,7 +55,8 @@ public class ReferralMatchingJob
                 await MarkSkippedFromActiveCheckFileAsync(connection, referralJobId, job.GroupId, job.UserId, cancellationToken);
             }
 
-            await InsertMatchResultsAsync(connection, referralJobId, job.GroupId, job.UserId, cancellationToken);
+            await InsertMatchResultsAsync(
+                connection, referralJobId, job.GroupId, job.UserId, onlyGrantedFiles: job.Role == UserRole.User, cancellationToken);
             await MarkMatchedAsync(connection, referralJobId, cancellationToken);
 
             var skippedCount = await CountByStatusAsync(connection, referralJobId, ReferralPlateStatus.Skipped, cancellationToken);
@@ -117,7 +118,8 @@ public class ReferralMatchingJob
     }
 
     private static async Task InsertMatchResultsAsync(
-        NpgsqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid referralJobId, Guid? groupId, Guid userId, bool onlyGrantedFiles,
+        CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -135,11 +137,19 @@ public class ReferralMatchingJob
               AND (
                     (@groupId IS NOT NULL AND df.group_id = @groupId)
                  OR (@groupId IS NULL AND df.group_id IS NULL AND df.owner_id = @userId)
+              )
+              AND (
+                    NOT @onlyGrantedFiles
+                 OR EXISTS (
+                        SELECT 1 FROM user_data_file_permissions udp
+                        WHERE udp.user_id = @userId AND udp.data_file_id = df.id
+                    )
               );";
 
         command.Parameters.AddWithValue("@jobId", referralJobId);
         command.Parameters.Add("@groupId", NpgsqlDbType.Uuid).Value = (object?)groupId ?? DBNull.Value;
         command.Parameters.AddWithValue("@userId", userId);
+        command.Parameters.AddWithValue("@onlyGrantedFiles", onlyGrantedFiles);
         command.CommandTimeout = 300;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

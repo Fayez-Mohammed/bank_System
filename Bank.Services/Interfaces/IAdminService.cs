@@ -17,4 +17,10 @@ public interface IAdminService
 
     Task<ApiResponse<UserPermissionDto>> UpdateMemberPermissionsAsync(
         Guid currentAdminId, Guid targetUserId, UpdateUserPermissionDto dto, CancellationToken ct = default);
+
+    Task<ApiResponse<List<UserDataFilePermissionDto>>> GetMemberDataFilePermissionsAsync(
+        Guid currentAdminId, Guid targetUserId, CancellationToken ct = default);
+
+    Task<ApiResponse<List<UserDataFilePermissionDto>>> UpdateMemberDataFilePermissionsAsync(
+        Guid currentAdminId, Guid targetUserId, UpdateUserDataFilePermissionsDto dto, CancellationToken ct = default);
 }

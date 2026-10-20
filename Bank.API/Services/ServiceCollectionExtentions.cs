@@ -85,6 +85,7 @@ namespace Bank.API.Services
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IFileStorageService, LocalFileStorageService>();
             services.AddScoped<IDataFileService, DataFileService>();
+            services.AddScoped<IPermissionService, PermissionService>();
             services.AddScoped<IAdminService, AdminService>();
             services.AddScoped<ISuperAdminService, SuperAdminService>();
             services.AddScoped<IReferralJobService, ReferralJobService>();

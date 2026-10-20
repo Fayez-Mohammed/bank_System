@@ -34,16 +34,20 @@ public class CheckFileService : ICheckFileService
     private readonly AppDbContext _dbContext;
     private readonly ICheckPlateCacheService _cache;
     private readonly IConfiguration _configuration;
+    private readonly IPermissionService _permissions;
+
+    private const string NoCheckFilePermissionMessage = "ليس لديك صلاحية إضافة أو حذف ملفات التشييك.";
 
     public CheckFileService(
         ILogger<CheckFileService> logger, IUnitOfWork unit, AppDbContext dbContext, ICheckPlateCacheService cache
-        , IConfiguration configuration)
+        , IConfiguration configuration, IPermissionService permissions)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
         _cache = cache;
         _configuration = configuration;
+        _permissions = permissions;
     }
 
     public async Task<ApiResponse<List<CheckFileSummaryDto>>> GetCheckFilesAsync(
@@ -68,12 +72,11 @@ public class CheckFileService : ICheckFileService
     public async Task<ApiResponse<CheckFileSummaryDto>> UploadAsync(
         Guid uploaderId, CreateCheckFileRequestDto request, CancellationToken cancellationToken = default)
     {
-        //var canUploadDataFilePermission=await _dbContext.UserPermissions
-        //    .AnyAsync(p => p.UserId == uploaderId && p.CanUploadDataFiles , cancellationToken);
-        //if(!canUploadDataFilePermission)
-        //{
-        //    return ApiResponse<CheckFileSummaryDto>.Fail("ليس لديك صلاحية رفع ملفات التشيك.");
-        //}
+        if (!await _permissions.CanManageCheckFilesAsync(uploaderId, cancellationToken))
+        {
+            return ApiResponse<CheckFileSummaryDto>.Fail(NoCheckFilePermissionMessage, null, 403);
+        }
+
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var validationError = ValidateUploadedFile(request.File);
         if (validationError is not null)
@@ -160,6 +163,12 @@ public class CheckFileService : ICheckFileService
         var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
         if (userScope == null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
 
+        if (!await _permissions.CanManageCheckFilesAsync(currentUserId, cancellationToken))
+        {
+            return ApiResponse<bool>.Fail(NoCheckFilePermissionMessage, null, 403);
+        }
+
+        // التحقق من نطاق الملف: ملفات الجروب، أو ملفات المستخدم الشخصية لو مش في جروب
         var checkFile = await _dbContext.CheckFiles
             .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, checkFileId), cancellationToken);
 

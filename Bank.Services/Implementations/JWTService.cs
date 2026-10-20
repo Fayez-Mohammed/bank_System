@@ -54,16 +54,15 @@ namespace Bank.Services.Implementations
 
                 if (permissions != null)
                 {
-                    if (permissions.CanDownload)
-                        clims.Add(new Claim("CanDownload", "true"));
+                    // للعرض في الفرونت بس — الـ API بيتحقق من الداتابيز في كل طلب (IPermissionService)
+                    if (permissions.CanManageCheckFiles)
+                        clims.Add(new Claim("CanManageCheckFiles", "true"));
 
-                   if(permissions.CanUploadDataFiles)
+                    if (permissions.CanUploadDataFiles)
                         clims.Add(new Claim("CanUploadDataFiles", "true"));
 
-                    if (permissions.CanUploadCheckFile)
-                        clims.Add(new Claim("CanUploadCheckFile", "true"));
-                    if(permissions.CanShare)
-                        clims.Add(new Claim("CanShare", "true"));
+                    if (permissions.CanSort)
+                        clims.Add(new Claim("CanSort", "true"));
                 }
             }
 

@@ -34,11 +34,13 @@ public class ReferralJobService : IReferralJobService
     // لوحة إحالة واحدة بعد قراءتها من الملف — القيمة الخام + باقي أعمدة نفس الصف كـ JSON.
     private sealed record RawReferralPlate(string RawPlate, string? ExtraDataJson);
     private readonly IConfiguration _configuration;
+    private readonly IPermissionService _permissions;
     public ReferralJobService(
         ILogger<ReferralJobService> logger, IUnitOfWork unit, AppDbContext dbContext,
         IPlateColumnDetector columnDetector, IBackgroundJobClient backgroundJobClient,
-        ICheckPlateCacheService checkPlateCache, IConfiguration configuration)
+        ICheckPlateCacheService checkPlateCache, IConfiguration configuration, IPermissionService permissions)
     {
+        _permissions = permissions;
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
@@ -374,6 +376,10 @@ public class ReferralJobService : IReferralJobService
 
         if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
 
+        // المستخدم العادي محتاج CanSort + إذن صريح على ملفات الداتا (الـ matching job بيفرز عليها بس)
+        var sortDenied = await _permissions.GetSortDeniedReasonAsync(userId, cancellationToken);
+        if (sortDenied is not null) return ApiResponse<Guid>.Fail(sortDenied, null, 403);
+
         var distinctPlates = new Dictionary<string, RawReferralPlate>();
         foreach (var raw in rawPlates)
         {
@@ -704,6 +710,12 @@ public class ReferralJobService : IReferralJobService
         // مرتبطة بيه (في كل عمليات الفرز، مش بس دي)، وrow_count بينقّص.
         var historicalPlateId = match.HistoricalPlateId;
         var dataFileId = match.SourceDataFileId;
+
+        // ده تعديل على ملف الداتا نفسه، فبياخد نفس قاعدة تعديل ملف الداتا
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            return ApiResponse<DeleteMatchedPlateResponseDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, 403);
+        }
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         try

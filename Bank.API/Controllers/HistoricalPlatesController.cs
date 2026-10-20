@@ -30,9 +30,9 @@ namespace Bank.API.Controllers
         /// row are synced (Found* fields) but no new matching is performed.
         /// </summary>
         [HttpPatch("{historicalPlateId:long}")]
-        [Authorize(Policy = "CanUploadDataFiles")]
         [ProducesResponseType(typeof(ApiResponse<UpdateHistoricalPlateResponseDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> Update(
             long historicalPlateId, [FromBody] UpdateHistoricalPlateDto request, CancellationToken cancellationToken)
