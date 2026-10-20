@@ -195,11 +195,22 @@ public class DataFileService : IDataFileService
     public async Task<ApiResponse<bool>> ToggleActiveAsync(
         Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope == null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
+        var exists = await _dbContext.DataFiles.AsNoTracking().AnyAsync(f => f.Id == dataFileId, cancellationToken);
+        if (!exists)
+        {
+            _logger.LogWarning("ToggleActive: DataFile {DataFileId} not found", dataFileId);
+            return ApiResponse<bool>.Fail("الملف غير موجود.", null, StatusCodes.Status404NotFound);
+        }
+
+        // تفعيل/إيقاف الملف في الفرز تعديل على الملف — نفس قاعدة التعديل
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            _logger.LogWarning("ToggleActive denied on DataFile {DataFileId} for user {UserId}", dataFileId, currentUserId);
+            return ApiResponse<bool>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
+        }
 
         var affected = await _dbContext.DataFiles
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, dataFileId))
+            .Where(f => f.Id == dataFileId)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(f => f.IsActiveForFiltering, f => !f.IsActiveForFiltering),
                 cancellationToken);
@@ -224,6 +235,13 @@ public class DataFileService : IDataFileService
 
         var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
         if (userScope == null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
+
+        // المستخدم العادي بيرتّب ملفاته هو بس (المرفوعة بـ CanUploadDataFiles) — الأدمن كل ملفات الجروب
+        var ownFilesOnly = userScope.Role == UserRole.User;
+        if (ownFilesOnly && !await _permissions.CanUploadDataFilesAsync(currentUserId, cancellationToken))
+        {
+            return ApiResponse<bool>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
+        }
 
         // UPDATE واحد بـ CASE WHEN بدل ما نعمل round trip منفصل لكل عنصر —
         // نفس النتيجة النهائية، لكن query واحدة بس مهما كان عدد الملفات
@@ -251,6 +269,12 @@ public class DataFileService : IDataFileService
         {
             sql.Append("group_id IS NULL AND owner_id = @scopeUserId");
             parameters.Add(new NpgsqlParameter("@scopeUserId", currentUserId));
+        }
+
+        if (ownFilesOnly && userScope.GroupId.HasValue)
+        {
+            sql.Append(" AND owner_id = @ownerId");
+            parameters.Add(new NpgsqlParameter("@ownerId", currentUserId));
         }
 
         var affected = await _dbContext.Database.ExecuteSqlRawAsync(sql.ToString(), parameters, cancellationToken);

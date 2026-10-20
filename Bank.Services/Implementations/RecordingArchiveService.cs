@@ -256,11 +256,10 @@ public class RecordingArchiveService : IRecordingArchiveService
 
         if (hasExisting)
         {
+            // النطاق اتشيك فوق في CanManageDataFileAsync (بيشمل الجروب اللي الأدمن بيديره)،
+            // فمنعيدش فلترته بـ userScope.GroupId وإلا الأدمن ميلاقيش ملف جروبه.
             var existingFile = await _dbContext.DataFiles
                 .Where(f => f.Id == request.ExistingDataFileId!.Value)
-                .Where(f => userScope.GroupId.HasValue
-                    ? f.GroupId == userScope.GroupId.Value
-                    : f.GroupId == null && f.OwnerId == currentUserId)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (existingFile is null)

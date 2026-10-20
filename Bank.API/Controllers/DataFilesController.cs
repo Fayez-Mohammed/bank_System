@@ -77,8 +77,8 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPatch("{dataFileId:guid}/toggle-active")]
-       // [Authorize(Policy = "CanToggleFiles")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> ToggleActive(Guid dataFileId, CancellationToken cancellationToken)
         {
@@ -92,8 +92,8 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPatch("reorder")]
-      //  [Authorize(Policy = "CanToggleFiles")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> Reorder([FromBody] ReorderDataFilesRequestDto request, CancellationToken cancellationToken)
         {
@@ -141,7 +141,7 @@ namespace Bank.API.Controllers
             catch (UnauthorizedAccessException ex)
             {
                 _logger.LogWarning(ex, "Download unauthorized for DataFile {DataFileId}", dataFileId);
-                return Forbid();
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status403Forbidden));
             }
         }
         /// <summary>

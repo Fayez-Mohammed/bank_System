@@ -627,7 +627,7 @@ public class ReferralJobService : IReferralJobService
         var userScope = await _dbContext.Users
             .AsNoTracking()
             .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .Select(u => new { u.GroupId, u.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<PagedResultDto<ReferralJobSummaryDto>>.Fail("المستخدم غير موجود.");
@@ -636,6 +636,10 @@ public class ReferralJobService : IReferralJobService
         query = userScope.GroupId.HasValue
             ? query.Where(j => j.GroupId == userScope.GroupId.Value)
             : query.Where(j => j.GroupId == null && j.UserId == currentUserId);
+
+        // المستخدم العادي بيشوف عمليات الفرز بتاعته بس (شوف GetJobInScopeAsync)
+        if (userScope.Role == UserRole.User)
+            query = query.Where(j => j.UserId == currentUserId);
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -660,13 +664,14 @@ public class ReferralJobService : IReferralJobService
         var userScope = await _dbContext.Users
             .AsNoTracking()
             .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .Select(u => new { u.GroupId, u.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
 
         var job = await _dbContext.ReferralJobs.FirstOrDefaultAsync(j => j.Id == referralJobId &&
-            (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId),
+            (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId) &&
+            (userScope.Role != UserRole.User || j.UserId == currentUserId),
             cancellationToken);
 
         if (job is null) return ApiResponse<bool>.Fail("عملية الفرز غير موجودة.", null, 404);
@@ -819,15 +824,20 @@ public class ReferralJobService : IReferralJobService
         var userScope = await _dbContext.Users
             .AsNoTracking()
             .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .Select(u => new { u.GroupId, u.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return null;
 
+        // المستخدم العادي بيشوف عمليات الفرز بتاعته بس: عملية زميل ممكن تكون اتفرزت على ملفات داتا
+        // هو مش واخد إذن عليها، فنتايجها متتعرضش له. الأدمن بيشوف كل عمليات الجروب.
+        var ownJobsOnly = userScope.Role == UserRole.User;
+
         return await _dbContext.ReferralJobs
             .AsNoTracking()
             .FirstOrDefaultAsync(j => j.Id == referralJobId &&
-                (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId),
+                (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId) &&
+                (!ownJobsOnly || j.UserId == currentUserId),
                 cancellationToken);
     }
 

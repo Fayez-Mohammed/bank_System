@@ -1,5 +1,6 @@
 using Bank.DAL.Context;
 using Bank.Services.Interfaces;
+using Bank.Shared.DTOs.AdminDTOs;
 using Bank.Shared.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,6 +61,40 @@ public class PermissionService : IPermissionService
             .AnyAsync(p => p.UserId == userId, cancellationToken);
 
         return hasAnyFile ? null : "مفيش أي ملف داتا مسموحلك تفرز عليه. اطلب من الأدمن يحددلك ملفات الفرز.";
+    }
+
+    public async Task<MyPermissionsDto?> GetMyPermissionsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var access = await GetAccessAsync(userId, cancellationToken);
+        if (access is null) return null;
+
+        if (access.Role != UserRole.User)
+        {
+            return new MyPermissionsDto
+            {
+                Role = access.Role.ToString(),
+                CanManageCheckFiles = true,
+                CanUploadDataFiles = true,
+                CanSort = true
+            };
+        }
+
+        var sortableIds = access.CanSort
+            ? await _dbContext.UserDataFilePermissions
+                .AsNoTracking()
+                .Where(p => p.UserId == userId)
+                .Select(p => p.DataFileId)
+                .ToListAsync(cancellationToken)
+            : new List<Guid>();
+
+        return new MyPermissionsDto
+        {
+            Role = access.Role.ToString(),
+            CanManageCheckFiles = access.CanManageCheckFiles,
+            CanUploadDataFiles = access.CanUploadDataFiles,
+            CanSort = access.CanSort,
+            SortableDataFileIds = sortableIds
+        };
     }
 
     private async Task<UserAccess?> GetAccessAsync(Guid userId, CancellationToken cancellationToken)

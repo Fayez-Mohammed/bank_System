@@ -34,4 +34,15 @@ namespace Bank.Shared.DTOs.AdminDTOs
     {
         public List<Guid> DataFileIds { get; set; } = new();
     }
+
+    // صلاحيات المستخدم الحالي للفرونت (بدل الـ JWT) — بتتقري من الداتابيز وقت الطلب.
+    // الأدمن والسوبر أدمن: كل الصلاحيات true، و SortableDataFileIds فاضية (بيفرزوا على كل ملفات نطاقهم).
+    public class MyPermissionsDto
+    {
+        public string Role { get; set; } = null!;
+        public bool CanManageCheckFiles { get; set; }
+        public bool CanUploadDataFiles { get; set; }
+        public bool CanSort { get; set; }
+        public List<Guid> SortableDataFileIds { get; set; } = new();
+    }
 }

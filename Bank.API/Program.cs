@@ -79,24 +79,8 @@ namespace Bank
             });
 
             builder.Services.AddApplicationServices(builder.Configuration);
-            builder.Services.AddAuthorization(options =>
-            {
-                options.AddPolicy("CanUploadDataFiles", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanUploadDataFiles", "true")));
-                options.AddPolicy("CanManageCheckFiles", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanManageCheckFiles", "true")));
-                options.AddPolicy("CanSort", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanSort", "true")));
-            });
+            // الصلاحيات مش في الـ JWT — بتتشيك من الداتابيز جوه الـ services (IPermissionService)
+            builder.Services.AddAuthorization();
             builder.Services.AddMemoryCache();
             var dpKeysPath = builder.Configuration["DataProtection:KeysPath"];
             

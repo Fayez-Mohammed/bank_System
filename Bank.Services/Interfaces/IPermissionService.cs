@@ -1,3 +1,5 @@
+using Bank.Shared.DTOs.AdminDTOs;
+
 namespace Bank.Services.Interfaces;
 
 /// <summary>
@@ -18,4 +20,7 @@ public interface IPermissionService
 
     // الفرز: null = مسموح، غير كده رسالة الرفض. المستخدم محتاج CanSort + إذن صريح لملف داتا واحد على الأقل
     Task<string?> GetSortDeniedReasonAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    // صلاحيات المستخدم الحالي عشان الفرونت يظهر/يخفي الحاجات — null لو المستخدم مش موجود أو موقوف
+    Task<MyPermissionsDto?> GetMyPermissionsAsync(Guid userId, CancellationToken cancellationToken = default);
 }
