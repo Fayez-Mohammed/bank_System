@@ -60,11 +60,11 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPost("{dataFileId:guid}/append")]
-        [Authorize(Policy = "CanAppendToTeamFiles")]
         [RequestSizeLimit(200_000_000)]
         [Consumes("multipart/form-data")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status202Accepted)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> Append(Guid dataFileId, [FromForm] AppendDataFileRequestDto request, CancellationToken cancellationToken)
         {
             var result = await _dataFileService.AppendAsync(dataFileId, CurrentUserId, request, cancellationToken);
@@ -122,7 +122,6 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpGet("{dataFileId:guid}/download")]
-        [Authorize(Policy = "CanDownload")]
         [Produces("application/octet-stream", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
         [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

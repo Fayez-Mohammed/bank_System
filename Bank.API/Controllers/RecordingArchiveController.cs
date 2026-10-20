@@ -77,7 +77,6 @@ public class RecordingArchiveController : ControllerBase
     /// archive itself is never cleared by this; it keeps accumulating and can be converted again later.
     /// </summary>
     [HttpPost("convert-to-data-file")]
-    [Authorize(Policy = "CanUploadDataFiles")]
     [ProducesResponseType(typeof(ApiResponse<ConvertArchiveToDataFileResponseDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

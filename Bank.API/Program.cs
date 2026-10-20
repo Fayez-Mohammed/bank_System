@@ -81,29 +81,16 @@ namespace Bank
             builder.Services.AddApplicationServices(builder.Configuration);
             builder.Services.AddAuthorization(options =>
             {
-                options.AddPolicy("CanDownload", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanDownload", "true")));
-
-            
-
                 options.AddPolicy("CanUploadDataFiles", policy =>
                     policy.RequireAssertion(context =>
                         context.User.IsInRole("Admin") ||
                         context.User.IsInRole("SuperAdmin") ||
                         context.User.HasClaim("CanUploadDataFiles", "true")));
-                options.AddPolicy("CanShare", policy =>
+                options.AddPolicy("CanManageCheckFiles", policy =>
                     policy.RequireAssertion(context =>
                         context.User.IsInRole("Admin") ||
                         context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanShare", "true")));
-                options.AddPolicy("CanUploadCheckFile", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanUploadCheckFile", "true")));
+                        context.User.HasClaim("CanManageCheckFiles", "true")));
                 options.AddPolicy("CanSort", policy =>
                     policy.RequireAssertion(context =>
                         context.User.IsInRole("Admin") ||

@@ -74,7 +74,6 @@ public class CertificatesController : ControllerBase
     /// (اسم الملف / النوع / اللون / المؤجر)، وتكمّل بـ api/referral-jobs/{id}/... زي أي إحالة.
     /// </summary>
     [HttpPost("sort")]
-    // [Authorize(Policy = "CanSort")]
     [ProducesResponseType(typeof(ApiResponse<CertificateSortResultDto>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 400)]
     public async Task<IActionResult> Sort([FromBody] CertificateSortRequestDto request, CancellationToken cancellationToken)

@@ -18,6 +18,7 @@ public class ApplicationUser : IdentityUser<Guid>
     public virtual Group? AdministeredGroup { get; set; }
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public UserPermission? UserPermission { get; set; }
+    public ICollection<UserDataFilePermission> DataFilePermissions { get; set; } = new List<UserDataFilePermission>();
     public ICollection<CheckFile> UploadedCheckFiles { get; set; } = new List<CheckFile>();
     public ICollection<RecordingSession> RecordingSessions { get; set; } = new List<RecordingSession>();
     public ICollection<LiveCheckLog> LiveCheckLogs { get; set; } = new List<LiveCheckLog>();

@@ -4,6 +4,7 @@ using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
 using Bank.Services.Helpers;
 using Bank.Services.HangFireJobs;
+using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.CertificateDTOs;
 using Bank.Shared.Enums;
@@ -30,19 +31,22 @@ public class CertificateService : ICertificateService
     private readonly IFileStorageService _storage;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<CertificateService> _logger;
+    private readonly IPermissionService _permissions;
 
     public CertificateService(
         AppDbContext db,
         IGoogleDriveClient drive,
         IFileStorageService storage,
         IBackgroundJobClient jobs,
-        ILogger<CertificateService> logger)
+        ILogger<CertificateService> logger,
+        IPermissionService permissions)
     {
         _db = db;
         _drive = drive;
         _storage = storage;
         _jobs = jobs;
         _logger = logger;
+        _permissions = permissions;
     }
 
     // =====================================================================
@@ -274,6 +278,9 @@ public class CertificateService : ICertificateService
             .Select(u => new { u.GroupId })
             .FirstOrDefaultAsync(ct);
         if (user == null) return ApiResponse<CertificateSortResultDto>.Fail("المستخدم غير موجود.", null, 404);
+
+        var sortDenied = await _permissions.GetSortDeniedReasonAsync(currentUserId, ct);
+        if (sortDenied is not null) return ApiResponse<CertificateSortResultDto>.Fail(sortDenied, null, 403);
 
         var batchNo = request.BatchNo ?? await _db.Certificates.MaxAsync(c => (int?)c.BatchNo, ct);
         if (batchNo == null)

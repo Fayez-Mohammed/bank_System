@@ -17,6 +17,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<Group> Groups => Set<Group>();
     public DbSet<UserPermission> UserPermissions => Set<UserPermission>();
+    public DbSet<UserDataFilePermission> UserDataFilePermissions => Set<UserDataFilePermission>();
     public DbSet<CheckFile> CheckFiles => Set<CheckFile>();
     public DbSet<CheckPlate> CheckPlates => Set<CheckPlate>();
     public DbSet<RecordingSession> RecordingSessions => Set<RecordingSession>();

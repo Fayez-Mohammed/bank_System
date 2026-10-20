@@ -46,6 +46,7 @@ public class CheckFilesController : ControllerBase
     [RequestSizeLimit(50_000_000)]
     [ProducesResponseType(typeof(ApiResponse<CheckFileSummaryDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Upload([FromForm] CreateCheckFileRequestDto request, CancellationToken cancellationToken)
     {
         var result = await _checkFileService.UploadAsync(CurrentUserId, request, cancellationToken);
@@ -75,6 +76,7 @@ public class CheckFilesController : ControllerBase
     [HttpDelete("{checkFileId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid checkFileId, CancellationToken cancellationToken)
     {

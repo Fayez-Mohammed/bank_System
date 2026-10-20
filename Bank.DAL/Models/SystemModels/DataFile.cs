@@ -26,4 +26,5 @@ public class DataFile : BaseEntity
 
     public virtual ICollection<HistoricalPlate> HistoricalPlates { get; set; } = new List<HistoricalPlate>();
     public virtual ICollection<MatchResult> MatchResultsAsSource { get; set; } = new List<MatchResult>();
+    public virtual ICollection<UserDataFilePermission> UserPermissions { get; set; } = new List<UserDataFilePermission>();
 }
