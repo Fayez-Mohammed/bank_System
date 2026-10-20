@@ -106,7 +106,7 @@ public class MapService : IMapService
                 m.FoundRecordedAt,
                 RecorderName = m.HistoricalPlate.RecorderName,
                 Notes = m.HistoricalPlate.Notes,
-                DatafileName = m.SourceDataFile.FileName
+                DataFileName = m.SourceDataFile.FileName
             })
             .ToListAsync(cancellationToken);
 
@@ -116,6 +116,19 @@ public class MapService : IMapService
         var coordsByLink = await LocationLinkHelper.ExtractCoordinatesBatchAsync(
             rows.Select(r => r.Location), httpClient, cancellationToken);
 
+        // أعمدة الإحالة المختارة على الـ job نفسه (زي ReferralJobService.BuildResultsAsync
+        // بالظبط) + قيمها لكل لوحة من ReferralPlate.ExtraDataJson.
+        var selectedReferralColumns = DeserializeReferralColumns(job.ReferralColumnsJson);
+        var extraByPlate = new Dictionary<string, string?>();
+        if (selectedReferralColumns.Count > 0)
+        {
+            extraByPlate = await _dbContext.ReferralPlates
+                .AsNoTracking()
+                .Where(p => p.ReferralJobId == job.Id)
+                .Select(p => new { p.NormalizedPlate, p.ExtraDataJson })
+                .ToDictionaryAsync(p => p.NormalizedPlate, p => p.ExtraDataJson, cancellationToken);
+        }
+
         var rowDtos = rows.Select(r =>
         {
             (double Latitude, double Longitude)? coords = null;
@@ -124,9 +137,13 @@ public class MapService : IMapService
                 coordsByLink.TryGetValue(r.Location, out coords);
             }
 
+            extraByPlate.TryGetValue(r.NormalizedPlate, out var extraJson);
+            var extraData = BuildExtraData(selectedReferralColumns, extraJson);
+
             return new MapResultRowDto(
                 r.NormalizedPlate, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
-                r.Notes, r.FoundRecordedAt, r.RecorderName, r.Location, coords?.Latitude, coords?.Longitude, r.DatafileName);
+                r.Notes, r.FoundRecordedAt, r.RecorderName, r.Location, coords?.Latitude, coords?.Longitude,
+                r.DataFileName, extraData);
         }).ToList();
 
         var carCount = rowDtos.Count(r => r.Latitude.HasValue && r.Longitude.HasValue);
@@ -134,7 +151,31 @@ public class MapService : IMapService
 
         return new MapResultDto(job.Id, carCount, unresolvedCount, DateTime.UtcNow, rowDtos);
     }
+    private static List<string> DeserializeReferralColumns(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new List<string>();
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>(); }
+        catch (JsonException) { return new List<string>(); }
+    }
 
+    private static Dictionary<string, string?> BuildExtraData(List<string> selectedHeaders, string? extraJson)
+    {
+        var dict = new Dictionary<string, string?>();
+        if (selectedHeaders.Count == 0) return dict;
+
+        Dictionary<string, string?>? extra = null;
+        if (!string.IsNullOrWhiteSpace(extraJson))
+        {
+            try { extra = JsonSerializer.Deserialize<Dictionary<string, string?>>(extraJson); }
+            catch (JsonException) { extra = null; }
+        }
+
+        foreach (var header in selectedHeaders)
+        {
+            dict[header] = extra != null && extra.TryGetValue(header, out var v) ? v : null;
+        }
+        return dict;
+    }
     private static MapResultDto DeserializeMapResult(MapResult cached)
     {
         var rows = JsonSerializer.Deserialize<List<MapResultRowDto>>(cached.ResultJson) ?? new List<MapResultRowDto>();
@@ -236,7 +277,7 @@ public class MapService : IMapService
         {
             foreach (var group in groups)
             {
-                rawRows.AddRange(ExtractRowsFromGroup(group.Headers, group.DataRows));
+                rawRows.AddRange(ExtractRowsFromGroup(group.Headers, group.DataRows, group.GroupName));
             }
         }
         else
@@ -250,7 +291,7 @@ public class MapService : IMapService
 
             var headerRow = rawSheetRows[headerRowIndex];
             var dataRows = rawSheetRows.Skip(headerRowIndex + 1).ToList();
-            rawRows.AddRange(ExtractRowsFromGroup(headerRow, dataRows));
+            rawRows.AddRange(ExtractRowsFromGroup(headerRow, dataRows, null));
         }
 
         if (rawRows.Count == 0)
@@ -316,7 +357,8 @@ public class MapService : IMapService
                     Latitude = coords?.Latitude,
                     Longitude = coords?.Longitude,
                     RecordedAt = r.RecordedAt,
-                    ExtraDataJson = r.ExtraJson
+                    ExtraDataJson = r.ExtraJson,
+                    DataFileName = r.DataFileName,
                 };
             }).ToList();
 
@@ -371,11 +413,23 @@ public class MapService : IMapService
 
         var rowDtos = rows.Select(r => new MapUploadedFileRowDto(
             r.Id, r.NormalizedPlate, r.VehicleType, r.District, r.Street, r.Notes, r.RecordedAt,
-            r.RecorderName, r.LocationLink, r.Latitude, r.Longitude)).ToList();
+            r.RecorderName, r.LocationLink, r.Latitude, r.Longitude, r.DataFileName, ParseExtraData(r.ExtraDataJson))).ToList();
 
         return new MapUploadedFileDto(file.Id, file.FileName, file.RowCount, carCount, unresolvedCount, file.UploadedAt, rowDtos);
     }
+    private static Dictionary<string, string?>? ParseExtraData(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
 
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string?>>(json);
+        }
+        catch (JsonException)
+        {
+            return null; // JSON تالف: نرجّع null بدل ما نكسر الـresponse كله
+        }
+    }
     // ---------- قراءة الملف بـ ClosedXML — بتفضّل رابط الـ Hyperlink الحقيقي ----------
 
     // على النص الظاهر في الخلية. ده اللي بيخلّي إعادة رفع ملف اتصدّر من WriteMatchedSheet
@@ -479,7 +533,7 @@ public class MapService : IMapService
 
     // بياخد هيدر وصفوف بيانات جدول واحد (سواء جاية من جروب أو من ملف بسيط)
     // ويطلّع منها RawMapRow، مع فصل الأعمدة الثابتة عن الأعمدة المتغيرة.
-    private List<RawMapRow> ExtractRowsFromGroup(List<string?> headerRow, List<List<string?>> dataRows)
+    private List<RawMapRow> ExtractRowsFromGroup(List<string?> headerRow, List<List<string?>> dataRows, string? dataFileName)
     {
         var result = new List<RawMapRow>();
 
@@ -517,7 +571,8 @@ public class MapService : IMapService
             result.Add(new RawMapRow(
                 rawPlate, Get(cols.VehicleTypeCol), Get(cols.DistrictCol), Get(cols.StreetCol),
                 Get(cols.NotesCol), Get(cols.RecorderNameCol), Get(cols.GpsCol), Get(cols.RecordedAtCol),
-                extra is null ? null : JsonSerializer.Serialize(extra)));
+                extra is null ? null : JsonSerializer.Serialize(extra),
+        dataFileName));
         }
 
         return result;
@@ -586,7 +641,7 @@ public class MapService : IMapService
 
     private sealed record RawMapRow(
         string RawPlate, string? VehicleType, string? District, string? Street,
-        string? Notes, string? RecorderName, string? Location, string? RecordedAt, string? ExtraJson);
+        string? Notes, string? RecorderName, string? Location, string? RecordedAt, string? ExtraJson, string? DataFileName);
 
     private sealed class FixedColumnMap
     {

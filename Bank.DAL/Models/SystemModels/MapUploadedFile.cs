@@ -38,4 +38,5 @@ public class MapUploadedPlateRow : BaseEntityLong
 
     // باقي أعمدة الملف المتغيرة (اسم العمود -> القيمة)، jsonb في Postgres
     public string? ExtraDataJson { get; set; }
+    public string? DataFileName { get; set; }
 }

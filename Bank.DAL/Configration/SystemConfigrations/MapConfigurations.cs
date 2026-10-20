@@ -72,7 +72,7 @@ public class MapUploadedPlateRowConfiguration : BaseEntityLongConfiguration<MapU
         builder.Property(x => x.Longitude).HasColumnName("longitude");
 
         builder.Property(x => x.ExtraDataJson).HasColumnName("extra_data_json").HasColumnType("jsonb");
-
+        builder.Property(x => x.DataFileName).HasColumnName("data_file_name").HasMaxLength(255);
         builder.HasIndex(x => x.MapUploadedFileId);
         builder.HasIndex(x => x.NormalizedPlate);
 

@@ -991,6 +991,11 @@ namespace Bank.DAL.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("DataFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("data_file_name");
+
                     b.Property<string>("District")
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")

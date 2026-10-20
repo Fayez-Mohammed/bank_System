@@ -13,7 +13,8 @@ public record MapResultRowDto(
     string? LocationLink,
     double? Latitude,
     double? Longitude,
-    string? DatafileName);
+    string? DatafileName,
+    Dictionary<string, string?> ExtraData);
 
 public record MapResultDto(
     Guid ReferralJobId,
@@ -33,7 +34,9 @@ public record MapUploadedFileRowDto(
     string? RecorderName,
     string? LocationLink,
     double? Latitude,
-    double? Longitude);
+    double? Longitude,
+    string? DataFileName,
+    Dictionary<string, string?>? ExtraData);
 
 public record MapUploadedFileDto(
     Guid Id,
