@@ -3,6 +3,7 @@ using Bank.Services.Interfaces;
 using Bank.Services.Interfaces.ILiveCheck;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Bank.API.Hubs;
@@ -24,16 +25,21 @@ public class LiveCheckHub : Hub
     private readonly ILiveCheckConnectionManager _connections;
     private readonly IHubContext<LiveCheckHub> _hubContext;
     private readonly ILogger<LiveCheckHub> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    private static readonly TimeSpan AiStopTimeout = TimeSpan.FromSeconds(10);
 
     public LiveCheckHub(
         ILiveCheckSessionService sessionService, ILiveCheckAiConnector aiConnector,
-        ILiveCheckConnectionManager connections, IHubContext<LiveCheckHub> hubContext, ILogger<LiveCheckHub> logger)
+        ILiveCheckConnectionManager connections, IHubContext<LiveCheckHub> hubContext, ILogger<LiveCheckHub> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _sessionService = sessionService;
         _aiConnector = aiConnector;
         _connections = connections;
         _hubContext = hubContext;
         _logger = logger;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task StartSession(string district, string street, string? excelSheetName)
@@ -60,7 +66,7 @@ public class LiveCheckHub : Hub
 
             // مش بننتظر الـ Task ده هنا — الـ Hub method لازم يرجع بسرعة، والاستماع
             // للنتايج شغال في الخلفية طول عمر الجلسة.
-            _ = ListenForDetectionsAsync(Context.ConnectionId, state);
+            state.ListenTask = ListenForDetectionsAsync(Context.ConnectionId, state);
 
             await Clients.Caller.SendAsync("SessionStarted", new { sessionId = session.Id, displayName = session.DisplayName });
         }
@@ -124,24 +130,29 @@ public class LiveCheckHub : Hub
         {
             await foreach (var plateEvent in state.AiSession.ReadDetectionsAsync(state.ListenCts.Token))
             {
+                // الـ loop ده عايش طول الجلسة، بعد ما scope الـ StartSession (والـ DbContext بتاعه)
+                // اتقفل — فكل حدث بياخد scope جديد بدل _sessionService بتاع الـ Hub.
+                using var scope = _scopeFactory.CreateScope();
+                var sessionService = scope.ServiceProvider.GetRequiredService<ILiveCheckSessionService>();
+
                 // الـ ٣ أنواع بترجع نفس شكل الـ DTO (LiveCheckPlateResultDto) وبتتبعت
                 // كلهم تحت نفس إيفنت "PlateChecked" — الفلاتر بيعمل upsert بالـ Id
                 // اللي جوّه النتيجة: Id جديد = صف جديد، Id موجود قبل كده = تحديث لصف
                 // ظاهر بالفعل (ده حال الـ correction والـ replacement).
                 var result = plateEvent switch
                 {
-                    PlateDetectedEvent detected => await _sessionService.ProcessDetectionAsync(
+                    PlateDetectedEvent detected => await sessionService.ProcessDetectionAsync(
                         state.SessionId, state.UserId, state.GroupId, state.CheckFileId, state.District, state.Street,
                         state.LastLatitude, state.LastLongitude,
                         new AiPlateDetectedEvent(detected.PlateNumber, detected.VehicleType, detected.TimestampMs),
-                        Bank.Shared.Enums.CheckType.Live, CancellationToken.None),
+                        Bank.Shared.Enums.CheckType.Live, state.ListenCts.Token),
 
-                    PlateCorrectionEvent correction => await _sessionService.ProcessCorrectionAsync(
-                        state.SessionId, state.CheckFileId, correction.NewPlateNumber, correction.VehicleType, CancellationToken.None),
+                    PlateCorrectionEvent correction => await sessionService.ProcessCorrectionAsync(
+                        state.SessionId, state.CheckFileId, correction.NewPlateNumber, correction.VehicleType, state.ListenCts.Token),
 
-                    PlateReplacementEvent replacement => await _sessionService.ProcessReplacementAsync(
+                    PlateReplacementEvent replacement => await sessionService.ProcessReplacementAsync(
                         state.SessionId, state.CheckFileId, replacement.OldPlateNumber, replacement.NewPlateNumber,
-                        replacement.VehicleType, CancellationToken.None),
+                        replacement.VehicleType, state.ListenCts.Token),
 
                     _ => null
                 };
@@ -160,18 +171,50 @@ public class LiveCheckHub : Hub
         {
             // متوقع لما StopSession/Disconnect يلغي الـ CancellationToken — مش error حقيقي
         }
+        catch (Exception ex) when (state.ListenCts.IsCancellationRequested)
+        {
+            // الإلغاء ممكن يوصل من الـ DB driver كـ exception تاني غير OperationCanceledException
+            _logger.LogWarning(ex, "AI listen loop interrupted by stop for connection {ConnectionId}", connectionId);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "AI listen loop failed for connection {ConnectionId}", connectionId);
+            state.Failed = true;
             await _hubContext.Clients.Client(connectionId).SendAsync("AiDisconnected", new { message = ex.Message });
-            await _sessionService.MarkSessionFailedAsync(state.SessionId, ex.Message, CancellationToken.None);
+            using var scope = _scopeFactory.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<ILiveCheckSessionService>()
+                .MarkSessionFailedAsync(state.SessionId, ex.Message, CancellationToken.None);
             _connections.Remove(connectionId);
         }
     }
 
     private async Task FinalizeSessionAsync(string connectionId, LiveCheckConnectionState state)
     {
+        // الـ AI بيمسك آخر كلام لحد ما يتأكد إنه خلص، فلو قفلنا على طول اللوحة اللي اتقالت
+        // قبل الإيقاف مباشرة بتضيع. بنبعت stop ونستنى السيرفر يبعت الباقي ويقفل (بحد أقصى).
+        try
+        {
+            using var stopCts = new CancellationTokenSource(AiStopTimeout);
+            await state.AiSession.SendStopAsync(stopCts.Token);
+            await Task.WhenAny(state.ListenTask, Task.Delay(AiStopTimeout));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error sending stop to AI for connection {ConnectionId}", connectionId);
+        }
+
         state.ListenCts.Cancel();
+
+        // WhenAny مش بيوقف الـ listener — لازم نستناه يخلص فعلًا عشان مفيش PlateChecked
+        // أو كتابة في الجلسة توصل بعد ما نقفلها.
+        try
+        {
+            await state.ListenTask;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AI listen loop ended with error for connection {ConnectionId}", connectionId);
+        }
 
         try
         {
@@ -182,7 +225,9 @@ public class LiveCheckHub : Hub
             _logger.LogWarning(ex, "Error closing AI session for connection {ConnectionId}", connectionId);
         }
 
-        await _sessionService.CompleteSessionAsync(state.SessionId, CancellationToken.None);
+        // لو الـ listener فشل (حتى أثناء الـ stop flush) الجلسة اتعلّمت Failed — منكتبش عليها Completed.
+        if (!state.Failed)
+            await _sessionService.CompleteSessionAsync(state.SessionId, CancellationToken.None);
         _connections.Remove(connectionId);
     }
 

@@ -451,8 +451,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(x.GroupId))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

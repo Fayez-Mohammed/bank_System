@@ -403,11 +403,10 @@ namespace Bank.Services.Implementations
 
 
             //var permission = new UserPermission { UserId = user.Id };
-            var permission = dto.Permissions is not null ? new UserPermission { UserId = user.Id, 
-                CanDownload = dto.Permissions.CanDownload ,
-                CanShare = dto.Permissions.CanShare,
-                CanUploadCheckFile = dto.Permissions.CanUploadCheckFile,
-                CanUploadDataFiles = dto.Permissions.CanUploadDataFiles
+            var permission = dto.Permissions is not null ? new UserPermission { UserId = user.Id,
+                CanManageCheckFiles = dto.Permissions.CanManageCheckFiles,
+                CanUploadDataFiles = dto.Permissions.CanUploadDataFiles,
+                CanSort = dto.Permissions.CanSort
             } : new UserPermission { UserId = user.Id };
 
             await _unitOfWork.Repository<UserPermission>().AddAsync(permission);
@@ -564,6 +563,10 @@ namespace Bank.Services.Implementations
             user.GroupId = dto.GroupId;
             await _unitOfWork.CompleteAsync();
 
+            // أذونات الفرز كانت على ملفات الجروب القديم
+            if (previousGroupId != dto.GroupId)
+                await _context.UserDataFilePermissions.Where(p => p.UserId == userId).ExecuteDeleteAsync(ct);
+
             _logger.LogInformation("User {UserId} moved from Group {OldGroupId} to Group {NewGroupId}", userId, previousGroupId, dto.GroupId);
 
             return await GetUserByIdAsync(userId, ct);
@@ -582,6 +585,9 @@ namespace Bank.Services.Implementations
             var previousGroupId = user.GroupId;
             user.GroupId = null;
             await _unitOfWork.CompleteAsync();
+
+            // أذونات الفرز كانت على ملفات الجروب ده
+            await _context.UserDataFilePermissions.Where(p => p.UserId == userId).ExecuteDeleteAsync(ct);
 
             _logger.LogInformation("User {UserId} removed from Group {GroupId}", userId, previousGroupId);
 

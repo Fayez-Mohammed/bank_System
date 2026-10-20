@@ -28,12 +28,14 @@ public class RecordingSessionService : IRecordingSessionService
     private readonly IFileStorageService _fileStorage;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IRecordingArchiveService _archiveService;
+    private readonly IPermissionService _permissions;
 
     public RecordingSessionService(
         ILogger<RecordingSessionService> logger, IUnitOfWork unit, AppDbContext dbContext,
         IFileStorageService fileStorage, IBackgroundJobClient backgroundJobClient,
-        IRecordingArchiveService archiveService)
+        IRecordingArchiveService archiveService, IPermissionService permissions)
     {
+        _permissions = permissions;
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
@@ -433,13 +435,20 @@ public class RecordingSessionService : IRecordingSessionService
 
         var dataFile = await _dbContext.DataFiles
             .Where(f => f.Id == request.DataFileId)
-            .Where(f => userScope.GroupId.HasValue ? f.GroupId == userScope.GroupId.Value : f.GroupId == null && f.OwnerId == currentUserId)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (dataFile is null) return ApiResponse<AppendToDataFileResultDto>.Fail("ملف الداتا التاريخية غير موجود.", null, 404);
+
+        // إلحاق تسجيل على ملف داتا = append على الملف، فبياخد نفس قاعدة ملف الداتا
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFile.Id, cancellationToken))
+        {
+            return ApiResponse<AppendToDataFileResultDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, StatusCodes.Status403Forbidden);
+        }
+
         var session = await _dbContext.RecordingSessions
             .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
             .FirstOrDefaultAsync(cancellationToken);
+        if (session is null) return ApiResponse<AppendToDataFileResultDto>.Fail("التسجيل غير موجود.", null, 404);
         var query = _dbContext.RecordedPlates.AsNoTracking().Where(p => p.SessionId == sessionId);
         query = request.AppendMode switch
         {
@@ -557,8 +566,9 @@ public class RecordingSessionService : IRecordingSessionService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId, u.FullName))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(x.GroupId, x.User.FullName))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

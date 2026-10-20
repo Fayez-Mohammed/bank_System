@@ -77,10 +77,9 @@ public class AdminService : IAdminService
                     .Where(p => p.UserId == u.Id)
                     .Select(p => new UserPermissionDto
                     {
-                        CanUploadDataFiles=p.CanUploadDataFiles,
-                        CanUploadCheckFile = p.CanUploadCheckFile,
-                        CanShare = p.CanShare,
-                        CanDownload = p.CanDownload
+                        CanManageCheckFiles = p.CanManageCheckFiles,
+                        CanUploadDataFiles = p.CanUploadDataFiles,
+                        CanSort = p.CanSort
                     })
                     .FirstOrDefault() ?? new UserPermissionDto()
             })
@@ -118,10 +117,9 @@ public class AdminService : IAdminService
                     .Where(p => p.UserId == u.Id)
                     .Select(p => new UserPermissionDto
                     {
-                      CanUploadDataFiles=p.CanUploadDataFiles,
-                        CanUploadCheckFile = p.CanUploadCheckFile,
-                        CanShare = p.CanShare,
-                        CanDownload = p.CanDownload
+                        CanManageCheckFiles = p.CanManageCheckFiles,
+                        CanUploadDataFiles = p.CanUploadDataFiles,
+                        CanSort = p.CanSort
                     })
                     .FirstOrDefault() ?? new UserPermissionDto()
             })
@@ -191,6 +189,9 @@ public class AdminService : IAdminService
     
         await _unitOfWork.CompleteAsync();
 
+        // أذونات الفرز كانت على ملفات الجروب ده — مبقتش ليها لازمة
+        await _context.UserDataFilePermissions.Where(p => p.UserId == targetUserId).ExecuteDeleteAsync(ct);
+
         _logger.LogInformation("Admin {AdminId} removed User {UserId} from Group {GroupId}", currentAdminId, targetUserId, myGroupId);
 
         return ApiResponse<bool>.SuccessResponse(true);
@@ -227,10 +228,9 @@ public class AdminService : IAdminService
         }
 
   
+        permission.CanManageCheckFiles = dto.CanManageCheckFiles;
         permission.CanUploadDataFiles = dto.CanUploadDataFiles;
-        permission.CanUploadCheckFile = dto.CanUploadCheckFile;
-        permission.CanShare = dto.CanShare;
-        permission.CanDownload = dto.CanDownload;
+        permission.CanSort = dto.CanSort;
 
        await permRepo.UpdateAsync(permission);
         await _unitOfWork.CompleteAsync();
@@ -238,5 +238,97 @@ public class AdminService : IAdminService
         _logger.LogInformation("Admin {AdminId} updated permissions for User {UserId} in Group {GroupId}", currentAdminId, targetUserId, myGroupId);
 
         return ApiResponse<UserPermissionDto>.SuccessResponse(dto);
+    }
+
+    public async Task<ApiResponse<List<UserDataFilePermissionDto>>> GetMemberDataFilePermissionsAsync(
+        Guid currentAdminId, Guid targetUserId, CancellationToken ct = default)
+    {
+        var myGroupId = await GetMyGroupIdAsync(currentAdminId, ct);
+        if (myGroupId is null)
+        {
+            return ApiResponse<List<UserDataFilePermissionDto>>.Fail(
+                "You do not currently administer any active group.");
+        }
+
+        var userInGroup = await _context.Users.AsNoTracking()
+            .AnyAsync(u => u.Id == targetUserId && u.GroupId == myGroupId && u.Role == UserRole.User, ct);
+
+        if (!userInGroup)
+        {
+            return ApiResponse<List<UserDataFilePermissionDto>>.Fail("User not found in your group.", null, 404);
+        }
+
+        // بس الأذونات على ملفات جروب الأدمن ده — أي إذن قديم على ملف برة الجروب ميظهرش له
+        var items = await _context.UserDataFilePermissions.AsNoTracking()
+            .Where(p => p.UserId == targetUserId && p.DataFile.GroupId == myGroupId)
+            .OrderBy(p => p.DataFile.SortOrder)
+            .Select(p => new UserDataFilePermissionDto
+            {
+                DataFileId = p.DataFileId,
+                FileName = p.DataFile.FileName,
+                GrantedByAdminId = p.GrantedByAdminId,
+                GrantedByAdminName = p.GrantedByAdmin.FullName,
+                CreatedAt = p.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return ApiResponse<List<UserDataFilePermissionDto>>.SuccessResponse(items);
+    }
+
+    public async Task<ApiResponse<List<UserDataFilePermissionDto>>> UpdateMemberDataFilePermissionsAsync(
+        Guid currentAdminId, Guid targetUserId, UpdateUserDataFilePermissionsDto dto, CancellationToken ct = default)
+    {
+        var myGroupId = await GetMyGroupIdAsync(currentAdminId, ct);
+        if (myGroupId is null)
+        {
+            return ApiResponse<List<UserDataFilePermissionDto>>.Fail(
+                "You do not currently administer any active group.");
+        }
+
+        var userInGroup = await _context.Users.AsNoTracking()
+            .AnyAsync(u => u.Id == targetUserId && u.GroupId == myGroupId && u.Role == UserRole.User, ct);
+
+        if (!userInGroup)
+        {
+            _logger.LogWarning("Admin {AdminId} tried to change data file permissions for User {UserId} outside their group", currentAdminId, targetUserId);
+            return ApiResponse<List<UserDataFilePermissionDto>>.Fail("User not found in your group.", null, 404);
+        }
+
+        var requestedIds = dto.DataFileIds.Distinct().ToList();
+
+        // الأدمن يقدر يدّي إذن بس على ملفات الداتا اللي في جروبه
+        var validIds = await _context.DataFiles.AsNoTracking()
+            .Where(f => requestedIds.Contains(f.Id) && f.GroupId == myGroupId)
+            .Select(f => f.Id)
+            .ToListAsync(ct);
+
+        if (validIds.Count != requestedIds.Count)
+        {
+            return ApiResponse<List<UserDataFilePermissionDto>>.Fail("Some data files were not found in your group.", null, 400);
+        }
+
+        // الأدمن بيعدّل أذونات ملفات جروبه بس — مش بيلمس أي إذن على ملف برة الجروب
+        var existing = await _context.UserDataFilePermissions
+            .Where(p => p.UserId == targetUserId && p.DataFile.GroupId == myGroupId)
+            .ToListAsync(ct);
+
+        _context.UserDataFilePermissions.RemoveRange(existing.Where(p => !validIds.Contains(p.DataFileId)));
+
+        var existingIds = existing.Select(p => p.DataFileId).ToHashSet();
+        _context.UserDataFilePermissions.AddRange(validIds
+            .Where(id => !existingIds.Contains(id))
+            .Select(id => new UserDataFilePermission
+            {
+                UserId = targetUserId,
+                DataFileId = id,
+                GrantedByAdminId = currentAdminId
+            }));
+
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Admin {AdminId} set {Count} sortable data files for User {UserId} in Group {GroupId}",
+            currentAdminId, validIds.Count, targetUserId, myGroupId);
+
+        return await GetMemberDataFilePermissionsAsync(currentAdminId, targetUserId, ct);
     }
 }

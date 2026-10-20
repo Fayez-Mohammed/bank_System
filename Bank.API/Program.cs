@@ -1,3 +1,5 @@
+using Bank.API.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Bank.API.Filters;
 using Bank.API.Hubs;
 using Bank.API.MiddleWare;
@@ -79,37 +81,10 @@ namespace Bank
             });
 
             builder.Services.AddApplicationServices(builder.Configuration);
-            builder.Services.AddAuthorization(options =>
-            {
-                options.AddPolicy("CanDownload", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanDownload", "true")));
-
-            
-
-                options.AddPolicy("CanUploadDataFiles", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanUploadDataFiles", "true")));
-                options.AddPolicy("CanShare", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanShare", "true")));
-                options.AddPolicy("CanUploadCheckFile", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanUploadCheckFile", "true")));
-                options.AddPolicy("CanSort", policy =>
-                    policy.RequireAssertion(context =>
-                        context.User.IsInRole("Admin") ||
-                        context.User.IsInRole("SuperAdmin") ||
-                        context.User.HasClaim("CanSort", "true")));
-            });
+            // الصلاحيات مش في الـ JWT — الـ policies والـ services بيشيكوها من الداتابيز (IPermissionService)
+            builder.Services.AddAuthorization(options => options.AddPermissionPolicies());
+            builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+            builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, PermissionDeniedResultHandler>();
             builder.Services.AddMemoryCache();
             var dpKeysPath = builder.Configuration["DataProtection:KeysPath"];
             

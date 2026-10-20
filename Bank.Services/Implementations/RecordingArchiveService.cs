@@ -1,3 +1,4 @@
+using Bank.Services.Helpers;
 using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
 using Bank.Repo.Interfaces;
@@ -18,14 +19,17 @@ public class RecordingArchiveService : IRecordingArchiveService
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
+    private readonly IPermissionService _permissions;
 
     public RecordingArchiveService(
-        ILogger<RecordingArchiveService> logger, IUnitOfWork unit, AppDbContext dbContext, IFileStorageService fileStorage)
+        ILogger<RecordingArchiveService> logger, IUnitOfWork unit, AppDbContext dbContext, IFileStorageService fileStorage,
+        IPermissionService permissions)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
         _fileStorage = fileStorage;
+        _permissions = permissions;
     }
     public async Task<ApiResponse<bool>> UpdateRowAsync(
       long id, Guid currentUserId, UpdateRecordingArchiveRowDto request, CancellationToken cancellationToken = default)
@@ -224,11 +228,20 @@ public class RecordingArchiveService : IRecordingArchiveService
 
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<ConvertArchiveToDataFileResponseDto>.Fail("المستخدم غير موجود.");
+
+        var allowed = hasExisting
+            ? await _permissions.CanManageDataFileAsync(currentUserId, request.ExistingDataFileId!.Value, cancellationToken)
+            : await _permissions.CanUploadDataFilesAsync(currentUserId, cancellationToken);
+        if (!allowed)
+        {
+            return ApiResponse<ConvertArchiveToDataFileResponseDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, 403);
+        }
 
         // بس الصفوف اللي لسه ما اتحوّلتش لملف داتا قبل كده — التحويل تراكمي،
         // مش بيفضّي الأرشيف، فلو عملته تاني بياخد الجديد بس.
@@ -245,11 +258,10 @@ public class RecordingArchiveService : IRecordingArchiveService
 
         if (hasExisting)
         {
+            // النطاق اتشيك فوق في CanManageDataFileAsync (بيشمل الجروب اللي الأدمن بيديره)،
+            // فمنعيدش فلترته بـ userScope.GroupId وإلا الأدمن ميلاقيش ملف جروبه.
             var existingFile = await _dbContext.DataFiles
                 .Where(f => f.Id == request.ExistingDataFileId!.Value)
-                .Where(f => userScope.GroupId.HasValue
-                    ? f.GroupId == userScope.GroupId.Value
-                    : f.GroupId == null && f.OwnerId == currentUserId)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (existingFile is null)

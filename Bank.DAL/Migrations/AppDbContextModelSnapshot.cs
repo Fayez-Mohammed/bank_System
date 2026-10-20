@@ -1695,6 +1695,44 @@ namespace Bank.DAL.Migrations
                     b.ToTable("refresh_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.UserDataFilePermission", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<Guid>("DataFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("data_file_id");
+
+                    b.Property<Guid>("GrantedByAdminId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("granted_by_admin_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DataFileId");
+
+                    b.HasIndex("GrantedByAdminId");
+
+                    b.HasIndex("UserId", "DataFileId")
+                        .IsUnique();
+
+                    b.ToTable("user_data_file_permissions", (string)null);
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.UserPermission", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1703,23 +1741,17 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("gen_random_uuid()");
 
-                    b.Property<bool>("CanDownload")
+                    b.Property<bool>("CanManageCheckFiles")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
-                        .HasColumnName("can_download");
+                        .HasColumnName("can_manage_check_files");
 
-                    b.Property<bool>("CanShare")
+                    b.Property<bool>("CanSort")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
-                        .HasColumnName("can_share");
-
-                    b.Property<bool>("CanUploadCheckFile")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("can_upload_check_file");
+                        .HasColumnName("can_sort");
 
                     b.Property<bool>("CanUploadDataFiles")
                         .ValueGeneratedOnAdd()
@@ -2218,6 +2250,33 @@ namespace Bank.DAL.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.UserDataFilePermission", b =>
+                {
+                    b.HasOne("Bank.DAL.Models.SystemModels.DataFile", "DataFile")
+                        .WithMany("UserPermissions")
+                        .HasForeignKey("DataFileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Bank.DAL.Models.BaseModels.ApplicationUser", "GrantedByAdmin")
+                        .WithMany()
+                        .HasForeignKey("GrantedByAdminId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Bank.DAL.Models.BaseModels.ApplicationUser", "User")
+                        .WithMany("DataFilePermissions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DataFile");
+
+                    b.Navigation("GrantedByAdmin");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.UserPermission", b =>
                 {
                     b.HasOne("Bank.DAL.Models.BaseModels.ApplicationUser", "User")
@@ -2284,6 +2343,8 @@ namespace Bank.DAL.Migrations
                 {
                     b.Navigation("AdministeredGroup");
 
+                    b.Navigation("DataFilePermissions");
+
                     b.Navigation("LiveCheckLogs");
 
                     b.Navigation("OwnedDataFiles");
@@ -2321,6 +2382,8 @@ namespace Bank.DAL.Migrations
                     b.Navigation("HistoricalPlates");
 
                     b.Navigation("MatchResultsAsSource");
+
+                    b.Navigation("UserPermissions");
                 });
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.Group", b =>

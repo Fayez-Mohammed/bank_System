@@ -104,4 +104,36 @@ public class AdminController : ControllerBase
         var result = await _adminService.UpdateMemberPermissionsAsync(CurrentUserId, id, dto, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+    /// <summary>
+    /// Get the data files a group member is allowed to sort against.
+    /// </summary>
+    /// <param name="id">The ID of the group member</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The member's sortable data files</returns>
+    [HttpGet("users/{id:guid}/data-file-permissions")]
+    [ProducesResponseType(typeof(ApiResponse<List<UserDataFilePermissionDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMemberDataFilePermissions(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _adminService.GetMemberDataFilePermissionsAsync(CurrentUserId, id, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+    /// <summary>
+    /// Replace the list of data files a group member is allowed to sort against.
+    /// </summary>
+    /// <param name="id">The ID of the group member</param>
+    /// <param name="dto">The full list of allowed data file IDs (from the admin's group)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The member's sortable data files after the update</returns>
+    [HttpPut("users/{id:guid}/data-file-permissions")]
+    [ProducesResponseType(typeof(ApiResponse<List<UserDataFilePermissionDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateMemberDataFilePermissions(
+        Guid id, [FromBody] UpdateUserDataFilePermissionsDto dto, CancellationToken cancellationToken)
+    {
+        var result = await _adminService.UpdateMemberDataFilePermissionsAsync(CurrentUserId, id, dto, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 }

@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+﻿using Bank.API.Authorization;
+using System.Security.Claims;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.DataFileDTOs;
@@ -43,6 +44,7 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPost]
+        [Authorize(Policy = PermissionPolicies.UploadDataFiles)]
         [RequestSizeLimit(200_000_000)]
         [Consumes("multipart/form-data")]
         [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]
@@ -60,11 +62,11 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPost("{dataFileId:guid}/append")]
-        [Authorize(Policy = "CanAppendToTeamFiles")]
         [RequestSizeLimit(200_000_000)]
         [Consumes("multipart/form-data")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status202Accepted)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> Append(Guid dataFileId, [FromForm] AppendDataFileRequestDto request, CancellationToken cancellationToken)
         {
             var result = await _dataFileService.AppendAsync(dataFileId, CurrentUserId, request, cancellationToken);
@@ -77,8 +79,8 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPatch("{dataFileId:guid}/toggle-active")]
-       // [Authorize(Policy = "CanToggleFiles")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> ToggleActive(Guid dataFileId, CancellationToken cancellationToken)
         {
@@ -92,8 +94,8 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPatch("reorder")]
-      //  [Authorize(Policy = "CanToggleFiles")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> Reorder([FromBody] ReorderDataFilesRequestDto request, CancellationToken cancellationToken)
         {
@@ -122,7 +124,6 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpGet("{dataFileId:guid}/download")]
-        [Authorize(Policy = "CanDownload")]
         [Produces("application/octet-stream", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
         [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
@@ -142,7 +143,7 @@ namespace Bank.API.Controllers
             catch (UnauthorizedAccessException ex)
             {
                 _logger.LogWarning(ex, "Download unauthorized for DataFile {DataFileId}", dataFileId);
-                return Forbid();
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status403Forbidden));
             }
         }
         /// <summary>

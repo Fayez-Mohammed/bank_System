@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+﻿using Bank.API.Authorization;
+using System.Security.Claims;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.ReferralJobDTOs;
@@ -31,6 +32,7 @@ public class ReferralJobsController : ControllerBase
     /// historical data columns.
     /// </summary>
     [HttpPost("from-check-file")]
+    [Authorize(Policy = PermissionPolicies.Sort)]
     [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateFromCheckFile(CancellationToken cancellationToken)
@@ -73,6 +75,7 @@ public class ReferralJobsController : ControllerBase
     /// and suggested plate/color/vehicle-type/model columns (suggestions only — not final).
     /// </summary>
     [HttpPost("upload/inspect")]
+    [Authorize(Policy = PermissionPolicies.Sort)]
     [RequestSizeLimit(50_000_000)]
     public async Task<IActionResult> InspectUpload(IFormFile file, CancellationToken cancellationToken)
     {
@@ -86,6 +89,7 @@ public class ReferralJobsController : ControllerBase
     /// columns chosen for display (defaults to inspect's suggestions if unchanged).
     /// </summary>
     [HttpPost("upload")]
+    [Authorize(Policy = PermissionPolicies.Sort)]
     [RequestSizeLimit(50_000_000)]
     [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
@@ -99,6 +103,7 @@ public class ReferralJobsController : ControllerBase
     /// Uploads a referral job from pasted text and creates a new referral job.
     /// </summary>
     [HttpPost("paste")]
+    [Authorize(Policy = PermissionPolicies.Sort)]
     [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Paste([FromBody] CreateReferralJobPasteRequestDto request, CancellationToken cancellationToken)

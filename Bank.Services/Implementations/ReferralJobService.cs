@@ -34,11 +34,13 @@ public class ReferralJobService : IReferralJobService
     // لوحة إحالة واحدة بعد قراءتها من الملف — القيمة الخام + باقي أعمدة نفس الصف كـ JSON.
     private sealed record RawReferralPlate(string RawPlate, string? ExtraDataJson);
     private readonly IConfiguration _configuration;
+    private readonly IPermissionService _permissions;
     public ReferralJobService(
         ILogger<ReferralJobService> logger, IUnitOfWork unit, AppDbContext dbContext,
         IPlateColumnDetector columnDetector, IBackgroundJobClient backgroundJobClient,
-        ICheckPlateCacheService checkPlateCache, IConfiguration configuration)
+        ICheckPlateCacheService checkPlateCache, IConfiguration configuration, IPermissionService permissions)
     {
+        _permissions = permissions;
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
@@ -52,8 +54,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
@@ -368,11 +371,16 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
+
+        // المستخدم العادي محتاج CanSort + إذن صريح على ملفات الداتا (الـ matching job بيفرز عليها بس)
+        var sortDenied = await _permissions.GetSortDeniedReasonAsync(userId, cancellationToken);
+        if (sortDenied is not null) return ApiResponse<Guid>.Fail(sortDenied, null, 403);
 
         var distinctPlates = new Dictionary<string, RawReferralPlate>();
         foreach (var raw in rawPlates)
@@ -620,8 +628,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<PagedResultDto<ReferralJobSummaryDto>>.Fail("المستخدم غير موجود.");
@@ -630,6 +639,10 @@ public class ReferralJobService : IReferralJobService
         query = userScope.GroupId.HasValue
             ? query.Where(j => j.GroupId == userScope.GroupId.Value)
             : query.Where(j => j.GroupId == null && j.UserId == currentUserId);
+
+        // المستخدم العادي بيشوف عمليات الفرز بتاعته بس (شوف GetJobInScopeAsync)
+        if (userScope.Role == UserRole.User)
+            query = query.Where(j => j.UserId == currentUserId);
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -653,14 +666,16 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
 
         var job = await _dbContext.ReferralJobs.FirstOrDefaultAsync(j => j.Id == referralJobId &&
-            (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId),
+            (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId) &&
+            (userScope.Role != UserRole.User || j.UserId == currentUserId),
             cancellationToken);
 
         if (job is null) return ApiResponse<bool>.Fail("عملية الفرز غير موجودة.", null, 404);
@@ -704,6 +719,12 @@ public class ReferralJobService : IReferralJobService
         // مرتبطة بيه (في كل عمليات الفرز، مش بس دي)، وrow_count بينقّص.
         var historicalPlateId = match.HistoricalPlateId;
         var dataFileId = match.SourceDataFileId;
+
+        // ده تعديل على ملف الداتا نفسه، فبياخد نفس قاعدة تعديل ملف الداتا
+        if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+        {
+            return ApiResponse<DeleteMatchedPlateResponseDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, 403);
+        }
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
@@ -806,16 +827,22 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return null;
 
+        // المستخدم العادي بيشوف عمليات الفرز بتاعته بس: عملية زميل ممكن تكون اتفرزت على ملفات داتا
+        // هو مش واخد إذن عليها، فنتايجها متتعرضش له. الأدمن بيشوف كل عمليات الجروب.
+        var ownJobsOnly = userScope.Role == UserRole.User;
+
         return await _dbContext.ReferralJobs
             .AsNoTracking()
             .FirstOrDefaultAsync(j => j.Id == referralJobId &&
-                (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId),
+                (userScope.GroupId.HasValue ? j.GroupId == userScope.GroupId.Value : j.GroupId == null && j.UserId == currentUserId) &&
+                (!ownJobsOnly || j.UserId == currentUserId),
                 cancellationToken);
     }
 
