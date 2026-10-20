@@ -19,6 +19,10 @@ public class LiveCheckConnectionState
     public double? LastLatitude { get; set; }
     public double? LastLongitude { get; set; }
     public CancellationTokenSource ListenCts { get; set; } = new();
+    // الـ Task بتاع ListenForDetectionsAsync — عشان عند الإيقاف نستنى آخر نتايج الـ AI قبل ما نقفل.
+    public Task ListenTask { get; set; } = Task.CompletedTask;
+    // بيتعلّم true لو الـ listen loop فشل وعلّم الجلسة Failed — عشان الإيقاف ميكتبش عليها Completed.
+    public bool Failed { get; set; }
 }
 
 public interface ILiveCheckConnectionManager
