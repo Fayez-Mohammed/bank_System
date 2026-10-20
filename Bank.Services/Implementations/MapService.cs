@@ -578,8 +578,9 @@ public class MapService : IMapService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId, u.Role))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(x.GroupId, x.User.Role))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

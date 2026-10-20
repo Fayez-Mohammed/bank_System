@@ -566,8 +566,9 @@ public class RecordingSessionService : IRecordingSessionService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId, u.FullName))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(x.GroupId, x.User.FullName))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

@@ -1,3 +1,5 @@
+using Bank.API.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Bank.API.Filters;
 using Bank.API.Hubs;
 using Bank.API.MiddleWare;
@@ -79,8 +81,10 @@ namespace Bank
             });
 
             builder.Services.AddApplicationServices(builder.Configuration);
-            // الصلاحيات مش في الـ JWT — بتتشيك من الداتابيز جوه الـ services (IPermissionService)
-            builder.Services.AddAuthorization();
+            // الصلاحيات مش في الـ JWT — الـ policies والـ services بيشيكوها من الداتابيز (IPermissionService)
+            builder.Services.AddAuthorization(options => options.AddPermissionPolicies());
+            builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+            builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, PermissionDeniedResultHandler>();
             builder.Services.AddMemoryCache();
             var dpKeysPath = builder.Configuration["DataProtection:KeysPath"];
             

@@ -1,3 +1,4 @@
+using Bank.Services.Helpers;
 using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
 using Bank.Repo.Interfaces;
@@ -227,8 +228,9 @@ public class RecordingArchiveService : IRecordingArchiveService
 
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<ConvertArchiveToDataFileResponseDto>.Fail("المستخدم غير موجود.");

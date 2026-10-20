@@ -1,4 +1,5 @@
-﻿using Bank.Services.Interfaces;
+﻿using Bank.API.Authorization;
+using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.CheckFileDTos;
 using Microsoft.AspNetCore.Authorization;
@@ -43,6 +44,7 @@ public class CheckFilesController : ControllerBase
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
     [RequestSizeLimit(50_000_000)]
     [ProducesResponseType(typeof(ApiResponse<CheckFileSummaryDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
@@ -74,6 +76,7 @@ public class CheckFilesController : ControllerBase
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     [HttpDelete("{checkFileId:guid}")]
+    [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
     [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]

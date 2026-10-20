@@ -54,8 +54,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
@@ -370,8 +371,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<Guid>.Fail("المستخدم غير موجود.");
@@ -626,8 +628,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId, u.Role })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<PagedResultDto<ReferralJobSummaryDto>>.Fail("المستخدم غير موجود.");
@@ -663,8 +666,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId, u.Role })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
@@ -823,8 +827,9 @@ public class ReferralJobService : IReferralJobService
     {
         var userScope = await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId, u.Role })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId, x.User.Role })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (userScope is null) return null;

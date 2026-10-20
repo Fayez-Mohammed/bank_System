@@ -258,8 +258,9 @@ public class AdminService : IAdminService
             return ApiResponse<List<UserDataFilePermissionDto>>.Fail("User not found in your group.", null, 404);
         }
 
+        // بس الأذونات على ملفات جروب الأدمن ده — أي إذن قديم على ملف برة الجروب ميظهرش له
         var items = await _context.UserDataFilePermissions.AsNoTracking()
-            .Where(p => p.UserId == targetUserId)
+            .Where(p => p.UserId == targetUserId && p.DataFile.GroupId == myGroupId)
             .OrderBy(p => p.DataFile.SortOrder)
             .Select(p => new UserDataFilePermissionDto
             {
@@ -306,8 +307,9 @@ public class AdminService : IAdminService
             return ApiResponse<List<UserDataFilePermissionDto>>.Fail("Some data files were not found in your group.", null, 400);
         }
 
+        // الأدمن بيعدّل أذونات ملفات جروبه بس — مش بيلمس أي إذن على ملف برة الجروب
         var existing = await _context.UserDataFilePermissions
-            .Where(p => p.UserId == targetUserId)
+            .Where(p => p.UserId == targetUserId && p.DataFile.GroupId == myGroupId)
             .ToListAsync(ct);
 
         _context.UserDataFilePermissions.RemoveRange(existing.Where(p => !validIds.Contains(p.DataFileId)));

@@ -1,3 +1,4 @@
+using Bank.Services.Helpers;
 using Bank.DAL.Context;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs.AdminDTOs;
@@ -42,9 +43,9 @@ public class PermissionService : IPermissionService
         return access.Role switch
         {
             UserRole.SuperAdmin => true,
-            // النطاق الإداري: ملفاته الشخصية + ملفات الجروب اللي بيديره (أو المربوط بيه)
+            // النطاق الإداري: ملفاته الشخصية + كل ملفات الجروب اللي بيديره (WithEffectiveGroup)
             UserRole.Admin => file.OwnerId == userId
-                || (file.GroupId.HasValue && (file.GroupId == access.GroupId || file.GroupId == access.AdministeredGroupId)),
+                || (file.GroupId.HasValue && file.GroupId == access.GroupId),
             _ => access.CanUploadDataFiles && file.OwnerId == userId
         };
     }
@@ -101,18 +102,18 @@ public class PermissionService : IPermissionService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId && u.IsActive)
-            .Select(u => new UserAccess(
-                u.Role,
-                u.GroupId,
-                _dbContext.Groups.Where(g => g.AdminId == u.Id && g.IsActive).Select(g => (Guid?)g.Id).FirstOrDefault(),
-                u.UserPermission != null && u.UserPermission.CanManageCheckFiles,
-                u.UserPermission != null && u.UserPermission.CanUploadDataFiles,
-                u.UserPermission != null && u.UserPermission.CanSort))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId && x.User.IsActive)
+            .Select(x => new UserAccess(
+                x.User.Role,
+                x.GroupId,
+                x.User.UserPermission != null && x.User.UserPermission.CanManageCheckFiles,
+                x.User.UserPermission != null && x.User.UserPermission.CanUploadDataFiles,
+                x.User.UserPermission != null && x.User.UserPermission.CanSort))
             .FirstOrDefaultAsync(cancellationToken);
     }
 
     private record UserAccess(
-        UserRole Role, Guid? GroupId, Guid? AdministeredGroupId,
+        UserRole Role, Guid? GroupId,
         bool CanManageCheckFiles, bool CanUploadDataFiles, bool CanSort);
 }

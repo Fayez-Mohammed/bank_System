@@ -415,11 +415,12 @@ public class DataFileService : IDataFileService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(
-                u.GroupId,
-                u.Group != null ? u.Group.Name : "ملفاتي الشخصية",
-                u.Role))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(
+                x.GroupId,
+                x.GroupName ?? "ملفاتي الشخصية",
+                x.User.Role))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

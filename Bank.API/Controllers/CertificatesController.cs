@@ -1,3 +1,4 @@
+using Bank.API.Authorization;
 using System.Security.Claims;
 using Bank.Services.Interfaces.ICertificate;
 using Bank.Shared.DTOs;
@@ -74,6 +75,7 @@ public class CertificatesController : ControllerBase
     /// (اسم الملف / النوع / اللون / المؤجر)، وتكمّل بـ api/referral-jobs/{id}/... زي أي إحالة.
     /// </summary>
     [HttpPost("sort")]
+    [Authorize(Policy = PermissionPolicies.Sort)]
     [ProducesResponseType(typeof(ApiResponse<CertificateSortResultDto>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 400)]
     public async Task<IActionResult> Sort([FromBody] CertificateSortRequestDto request, CancellationToken cancellationToken)

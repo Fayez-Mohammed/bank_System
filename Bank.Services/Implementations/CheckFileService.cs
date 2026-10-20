@@ -1,3 +1,4 @@
+using Bank.Services.Helpers;
 using System.Data;
 using System.Globalization;
 using Bank.DAL.Context;
@@ -272,8 +273,9 @@ public class CheckFileService : ICheckFileService
     {
         return await _dbContext.Users
             .AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new UserScopeInfo(u.GroupId, u.Role))
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == userId)
+            .Select(x => new UserScopeInfo(x.GroupId, x.User.Role))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

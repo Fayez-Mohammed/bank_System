@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+﻿using Bank.API.Authorization;
+using System.Security.Claims;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.DataFileDTOs;
@@ -43,6 +44,7 @@ namespace Bank.API.Controllers
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
         [HttpPost]
+        [Authorize(Policy = PermissionPolicies.UploadDataFiles)]
         [RequestSizeLimit(200_000_000)]
         [Consumes("multipart/form-data")]
         [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status202Accepted)]

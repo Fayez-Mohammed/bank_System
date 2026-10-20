@@ -274,8 +274,9 @@ public class CertificateService : ICertificateService
         Guid currentUserId, CertificateSortRequestDto request, CancellationToken ct = default)
     {
         var user = await _db.Users.AsNoTracking()
-            .Where(u => u.Id == currentUserId)
-            .Select(u => new { u.GroupId })
+            .WithEffectiveGroup()
+            .Where(x => x.User.Id == currentUserId)
+            .Select(x => new { x.GroupId })
             .FirstOrDefaultAsync(ct);
         if (user == null) return ApiResponse<CertificateSortResultDto>.Fail("المستخدم غير موجود.", null, 404);
 
