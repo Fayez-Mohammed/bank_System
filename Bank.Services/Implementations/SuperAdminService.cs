@@ -4,6 +4,7 @@ using Bank.DAL.Models.SystemModels;
 using Bank.Repo.Interfaces;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
+using Bank.Shared.DTOs.AdminDTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.Enums;
 using Microsoft.AspNetCore.Identity;
@@ -461,7 +462,16 @@ namespace Bank.Services.Implementations
                     IsActive = u.IsActive,
                     CreatedAt = u.CreatedAt,
                     GroupId = u.GroupId,
-                    GroupName = u.Group != null ? u.Group.Name : null
+                    GroupName = u.Group != null ? u.Group.Name : null,
+                    Permissions = _context.UserPermissions
+                    .Where(p => p.UserId == u.Id)
+                    .Select(p => new UserPermissionDto
+                    {
+                        CanManageCheckFiles = p.CanManageCheckFiles,
+                        CanUploadDataFiles = p.CanUploadDataFiles,
+                        CanSort = p.CanSort
+                    })
+                    .FirstOrDefault() ?? new UserPermissionDto()
                 })
                 .ToListAsync(ct);
 

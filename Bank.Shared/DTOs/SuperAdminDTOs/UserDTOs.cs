@@ -50,5 +50,7 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         public DateTime CreatedAt { get; set; }
         public Guid? GroupId { get; set; }
         public string? GroupName { get; set; }
+        public UserPermissionDto Permissions { get; set; } = new();
+
     }
 }
