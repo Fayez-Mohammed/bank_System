@@ -56,7 +56,15 @@ public class PermissionService : IPermissionService
         if (access is null) return "المستخدم غير موجود.";
         if (access.Role != UserRole.User) return null;
         if (!access.CanSort) return "ليس لديك صلاحية الفرز.";
-
+        var user=await _dbContext.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new {role= u.Role,isInGroup= u.GroupId.HasValue })
+            .FirstOrDefaultAsync(cancellationToken);
+        if(user.role == UserRole.User && !user.isInGroup)
+        {
+            return null; // Allow sorting for users not in any group
+        }
         var hasAnyFile = await _dbContext.UserDataFilePermissions
             .AsNoTracking()
             .AnyAsync(p => p.UserId == userId, cancellationToken);

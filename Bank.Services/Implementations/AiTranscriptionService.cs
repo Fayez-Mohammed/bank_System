@@ -184,6 +184,10 @@ public class AiTranscriptionService : IAiTranscriptionService
         var baseUrl = configuration["AiService:BaseUrl"] ?? "http://localhost:8000";
         _httpClient.BaseAddress = new Uri(baseUrl);
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
+        // Plate AI server key (sent as X-API-Key); empty = AI server has no key
+        var apiKey = configuration["AiService:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            _httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
     }
 
     public async Task<AiTranscriptionResult> TranscribeAsync(

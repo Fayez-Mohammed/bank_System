@@ -62,125 +62,106 @@ public static class PlateNormalizer
         return sb.ToString().Trim();
     }
 
-    private static readonly Regex ReferralPlatePattern =
-     new(@"^([A-Za-z\u0621-\u064A]+)([0-9]*)$", RegexOptions.Compiled);
+    private static readonly Regex LettersThenDigitsPattern =
+        new(@"^([A-Z\u0621-\u064A]+)([0-9]*)$", RegexOptions.Compiled);
 
- 
-    private static readonly Regex ReversedReferralPlatePattern =
-        new(@"^([0-9]+)([A-Za-z\u0621-\u064A]+)$", RegexOptions.Compiled);
+    private static readonly Regex DigitsThenLettersPattern =
+        new(@"^([0-9]+)([A-Z\u0621-\u064A]+)$", RegexOptions.Compiled);
 
-    //public static string NormalizeReferralPlate(string rawPlate)
-    //{
-    //    if (string.IsNullOrWhiteSpace(rawPlate)) return string.Empty;
-
-    //    var cleaned = rawPlate.Replace(" ", "").Replace("-", "").Trim().ToUpperInvariant();
-    //    cleaned = ConvertArabicIndicDigitsToWestern(cleaned);
-
-    //    string letters;
-    //    string digits;
-
-    //    var match = ReferralPlatePattern.Match(cleaned);
-    //    if (match.Success)
-    //    {
-    //        letters = match.Groups[1].Value;
-    //        digits = match.Groups[2].Value;
-    //    }
-    //    else
-    //    {
-    //        var reversedMatch = ReversedReferralPlatePattern.Match(cleaned);
-    //        if (reversedMatch.Success)
-    //        {
-    //            digits = reversedMatch.Groups[1].Value;
-    //            letters = reversedMatch.Groups[2].Value;
-    //        }
-    //        else
-    //        {
-    //            return cleaned;
-    //        }
-    //    }
-
-    //    var mappedLetters = new StringBuilder(letters.Length);
-    //    foreach (var ch in letters)
-    //    {
-    //        mappedLetters.Append(EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar) ? arabicChar : ch);
-    //    }
-
-    //    var paddedDigits = digits.Length >= 4 ? digits : digits.PadLeft(4, '0');
-
-    //    return mappedLetters.ToString() + paddedDigits;
-    //}
     public static string NormalizeReferralPlate(string rawPlate)
     {
-        if (string.IsNullOrWhiteSpace(rawPlate))
-            return string.Empty;
+        if (string.IsNullOrWhiteSpace(rawPlate)) return string.Empty;
 
-        var cleaned = rawPlate
-            .Replace(" ", "")
-            .Replace("-", "")
-            .Trim()
-            .ToUpperInvariant();
+        var cleaned = CleanReferralInput(rawPlate);
 
-        cleaned = ConvertArabicIndicDigitsToWestern(cleaned);
+        string letterPart, digitPart;
 
-        string letters;
-        string digits;
-
-        var match = ReferralPlatePattern.Match(cleaned);
-
+        var match = LettersThenDigitsPattern.Match(cleaned);
         if (match.Success)
         {
-            letters = match.Groups[1].Value;
-            digits = match.Groups[2].Value;
+            letterPart = match.Groups[1].Value;
+            digitPart = match.Groups[2].Value;
         }
         else
         {
-            var reversedMatch = ReversedReferralPlatePattern.Match(cleaned);
+            var reversedMatch = DigitsThenLettersPattern.Match(cleaned);
+            if (!reversedMatch.Success) return cleaned;
 
-            if (reversedMatch.Success)
-            {
-                digits = reversedMatch.Groups[1].Value;
-                letters = reversedMatch.Groups[2].Value;
-            }
-            else
-            {
-                return cleaned;
-            }
+            digitPart = reversedMatch.Groups[1].Value;
+            letterPart = reversedMatch.Groups[2].Value;
         }
 
-        var mappedLetters = new StringBuilder(letters.Length);
+        // نفصل الحروف العربية عن اللاتينية (ممكن الاتنين موجودين في نفس الخانة)
+        var arabic = new StringBuilder();
+        var latin = new StringBuilder();
+        foreach (var ch in letterPart)
+            (ch is >= 'A' and <= 'Z' ? latin : arabic).Append(ch);
 
-        // Reverse the source letter order
-        for (var i = letters.Length - 1; i >= 0; i--)
+        string letters;
+        if (arabic.Length > 0)
         {
-            var ch = letters[i];
-
-            mappedLetters.Append(
-                EnglishToArabicPlateLetters.TryGetValue(ch, out var arabicChar)
+            // العربي موجود (لوحده أو جنب الإنجليزي): هو الأصل، بنستخدمه زي ما هو.
+            letters = arabic.ToString();
+        }
+        else
+        {
+            // إنجليزي بس: نحوّله لعربي ونعكس الترتيب
+            var mapped = new StringBuilder(latin.Length);
+            for (var i = latin.Length - 1; i >= 0; i--)
+            {
+                mapped.Append(EnglishToArabicPlateLetters.TryGetValue(latin[i], out var arabicChar)
                     ? arabicChar
-                    : ch);
+                    : latin[i]);
+            }
+            letters = mapped.ToString();
         }
 
-        var paddedDigits = digits.Length >= 4
-            ? digits
-            : digits.PadLeft(4, '0');
-
-        return mappedLetters.ToString() + paddedDigits;
+        var paddedDigits = digitPart.Length >= 4 ? digitPart : digitPart.PadLeft(4, '0');
+        return letters + paddedDigits;
     }
 
-    private static string ConvertArabicIndicDigitsToWestern(string input)
+    // بيشيل المسافات (بكل أنواعها)، الشرطة، التطويل، التشكيل، وعلامات اتجاه الكتابة
+    // اللي بتيجي مع النسخ واللصق، ويوحّد الأرقام والحروف العربية زي Normalize بالظبط.
+    private static string CleanReferralInput(string input)
     {
-        var builder = new StringBuilder(input.Length);
-        foreach (var ch in input)
+        var normalized = input.Normalize(NormalizationForm.FormC);
+        var sb = new StringBuilder(normalized.Length);
+
+        foreach (var raw in normalized)
         {
-            if (ch is >= '\u0660' and <= '\u0669')
+            if (char.IsWhiteSpace(raw) || raw == '-' || raw == '\u0640' ||
+                (raw >= '\u064B' && raw <= '\u065F') || IsBidiControl(raw))
             {
-                builder.Append((char)('0' + (ch - '\u0660')));
+                continue;
             }
-            else
+
+            var ch = ToWesternDigit(raw);
+            ch = ch switch
             {
-                builder.Append(ch);
-            }
+                'أ' or 'إ' or 'آ' or 'ٱ' => 'ا',
+                'ة' => 'ه',
+                'ى' => 'ي',
+                'ؤ' => 'و',
+                'ئ' => 'ي',
+                _ => char.ToUpperInvariant(ch)
+            };
+
+            sb.Append(ch);
         }
-        return builder.ToString();
+
+        return sb.ToString();
     }
+
+    private static bool IsBidiControl(char ch) =>
+        ch is '\u200B' or '\u200E' or '\u200F'
+            or (>= '\u202A' and <= '\u202E')
+            or (>= '\u2066' and <= '\u2069');
+
+    private static char ToWesternDigit(char ch) => ch switch
+    {
+        >= '\u0660' and <= '\u0669' => (char)('0' + (ch - '\u0660')),   // ٠١٢٣...
+        >= '\u06F0' and <= '\u06F9' => (char)('0' + (ch - '\u06F0')),   // ۰۱۲۳...
+        _ => ch
+    };
+
 }

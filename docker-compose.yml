@@ -67,7 +67,10 @@ services:
       # Plate AI server (plate_model). Inside the container "localhost" is the API itself,
       # so set these in .env to the AI server's real address.
       AiService__BaseUrl: ${AI_BASE_URL:-http://host.docker.internal:8000}
+      AiService__ApiKey: ${AI_API_KEY:-}
       LiveCheckAi__WebSocketUrl: ${AI_WS_URL:-ws://host.docker.internal:8000/ws/live-check}
+     
+
 
       FileStorage__RootPath: /data/storage
     extra_hosts:

@@ -140,6 +140,7 @@ public class ReferralMatchingJob
               )
               AND (
                     NOT @onlyGrantedFiles
+                  OR @groupId IS NULL
                  OR EXISTS (
                         SELECT 1 FROM user_data_file_permissions udp
                         WHERE udp.user_id = @userId AND udp.data_file_id = df.id
