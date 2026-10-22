@@ -78,6 +78,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - storage:/data/storage
+      - ./Logs:/app/Logs
     ports:
       # Bind to localhost only; put Nginx/Caddy in front for TLS.
       # Change to "${API_BIND:-127.0.0.1}:8080:8080" to make the host configurable.
