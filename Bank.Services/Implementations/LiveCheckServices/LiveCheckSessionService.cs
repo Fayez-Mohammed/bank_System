@@ -31,6 +31,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     {
         if (string.IsNullOrWhiteSpace(recorderName))
             throw new ArgumentException("اسم المسجل مطلوب.", nameof(recorderName));
+        recorderName = recorderName?.Trim() ?? "";
+        if (recorderName.Length > 200) throw new ArgumentException("اسم المسجل طويل جدًا.", nameof(recorderName));
         var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
         if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
 
