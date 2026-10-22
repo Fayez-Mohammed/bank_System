@@ -25,6 +25,8 @@ public class CheckSessionsController : ControllerBase
 
     /// <summary>تشيك يدوي — standalone، بيعمل ميني-session لوحده وبيرجّع النتيجة فورًا.</summary>
     [HttpPost("manual-check")]
+    [ProducesResponseType(typeof(ApiResponse<ManualLiveCheckResultDto>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
     public async Task<IActionResult> CreateManualCheck([FromBody] CreateManualLiveCheckRequestDto request, CancellationToken cancellationToken)
     {
         var result = await _service.CreateManualCheckAsync(CurrentUserId, request, cancellationToken);
@@ -32,6 +34,7 @@ public class CheckSessionsController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<List<CheckSessionSummaryDto>>), 200)]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
     {
         var result = await _service.GetAllAsync(CurrentUserId, cancellationToken);
@@ -39,6 +42,8 @@ public class CheckSessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId:guid}/plates")]
+    [ProducesResponseType(typeof(ApiResponse<PagedResult<LiveCheckLogRowDto>>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
     public async Task<IActionResult> GetPlates(
         Guid sessionId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken cancellationToken = default)
     {
@@ -47,6 +52,8 @@ public class CheckSessionsController : ControllerBase
     }
 
     [HttpGet("{sessionId:guid}/export")]
+    [ProducesResponseType(typeof(ApiResponse<object>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
     public async Task<IActionResult> Export(Guid sessionId, CancellationToken cancellationToken)
     {
         try
@@ -61,6 +68,8 @@ public class CheckSessionsController : ControllerBase
     }
 
     [HttpDelete("{sessionId:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
     public async Task<IActionResult> Delete(Guid sessionId, CancellationToken cancellationToken)
     {
         var result = await _service.DeleteAsync(sessionId, CurrentUserId, cancellationToken);
@@ -70,6 +79,8 @@ public class CheckSessionsController : ControllerBase
 
     /// <summary>"مسح كل التسجيلات" — حذف نهائي لكل جلسات التشييك في الـ scope.</summary>
     [HttpDelete]
+    [ProducesResponseType(typeof(ApiResponse<int>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
     public async Task<IActionResult> DeleteAll(CancellationToken cancellationToken)
     {
         var result = await _service.DeleteAllAsync(CurrentUserId, cancellationToken);

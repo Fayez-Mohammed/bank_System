@@ -120,6 +120,7 @@ namespace Bank
                 job => job.SyncAsync(CancellationToken.None),
                 app.Configuration["Certificates:SyncCron"] ?? "*/10 * * * *");
             app.MapHub<LiveCheckHub>("/hubs/live-check");
+            app.MapHub<MemberLocationHub>("/hubs/member-location");
 
             app.MapControllers();
 

@@ -12,6 +12,8 @@ using Bank.Shared.DTOs;
 using Microsoft.EntityFrameworkCore;
 using Bank.DAL.Models.BaseModels;
 using Bank.Services.Interfaces;
+using Bank.Shared.DTOs.UserDTOs;
+using Bank.DAL.Context;
 
 namespace Bank.Services.Implementations
 {
@@ -19,15 +21,18 @@ namespace Bank.Services.Implementations
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole<Guid>> _roleManager;
+        private readonly AppDbContext _dbContext;
         private readonly IUnitOfWork _unitOfWork;
         public UserService(UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole<Guid>> roleManager,
-            IUnitOfWork unitOfWork
+            IUnitOfWork unitOfWork,
+            AppDbContext dbContext
             )
         {
             _roleManager = roleManager;
             _userManager = userManager;
             _unitOfWork = unitOfWork;
+            _dbContext = dbContext;
         }
         public async Task<ApplicationUser> GetByEmailAsync(string email)
         =>await _userManager.FindByEmailAsync(email);
@@ -57,15 +62,67 @@ namespace Bank.Services.Implementations
             bool Iscorrect=await _userManager.CheckPasswordAsync(user, password);
             return Iscorrect;
         }
+        public async Task<ApiResponse<MyGroupDTO>> GetMyGroupAsync(string userId)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+                throw new InvalidOperationException("User not found.");
+            if (user.Role == UserRole.User)
+            {
+                var group = await _dbContext.Groups
+                    .Where(g => g.Id == user.GroupId)
+                    .Select(g => new MyGroupDTO
+                    {
+                        IsInGroup = user.GroupId != null,
+                        UserRole = user.Role.ToString(),
+                        GroupId = g.Id.ToString(),
+                        GroupName = g.Name
+                    })
+                    .ToListAsync();
+                var response = new ApiResponse<MyGroupDTO>
+                {
+                    Data = group.FirstOrDefault(),
+                    Success = true,
+                    Message = "User group retrieved successfully."
+                };
+                return response;
+            }
+            else if (user.Role == UserRole.Admin)
+            {
+                var group = await _dbContext.Groups
+                    .Where(g=>g.AdminId==user.Id)
+                    .Select(g => new MyGroupDTO
+                    {
+                        IsInGroup = true,
+                        UserRole = user.Role.ToString(),
+                        GroupId = g.Id.ToString(),
+                        GroupName = g.Name
+                    })
+                    .ToListAsync();
+                var response = new ApiResponse<MyGroupDTO>
+                {
+                    Data = group.FirstOrDefault(),
+                    Success = true,
+                    Message = "Admin group retrieved successfully."
+                };
+                return response;
+            }
+            else
+            {
+                throw new InvalidOperationException("Invalid user role.");
+            }
+        
+           
+        }
 
         //public async Task UpdateProfilePictureAsync(string userId, string imagePath)
         //{
         //    var user =await _userManager.FindByIdAsync(userId);
         //    user.ImagePath = imagePath;
         //  await  _unitOfWork.CompleteAsync();
-           
+
         //}
 
-     
+
     }
 }

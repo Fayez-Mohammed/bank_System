@@ -9,6 +9,7 @@ using SendGrid.Helpers.Errors.Model;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Bank.Shared.DTOs.UserDTOs;
 
 namespace Bank.Services.Implementations
 {
@@ -77,6 +78,14 @@ namespace Bank.Services.Implementations
 
             };
             return ApiResponse<LoginResponseDTO>.SuccessResponse(result, "User logged in successfully", 200);
+
+        }
+        public async Task<ApiResponse<MyGroupDTO>> GetMyGroupAsync(string userId)
+        {
+            if (string.IsNullOrEmpty(userId))
+                return ApiResponse<MyGroupDTO>.Fail("UserId is required");
+            var response = await _userService.GetMyGroupAsync(userId);
+            return response;
 
         }
     }

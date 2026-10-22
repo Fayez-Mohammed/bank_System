@@ -3,6 +3,7 @@ using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AdminDTOs;
 using Bank.Shared.DTOs.AuthDTOs;
+using Bank.Shared.DTOs.UserDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,8 @@ namespace Bank.API.Controllers
             _service = service;
             _permissions = permissions;
         }
+        private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
         ///// <summary>
         ///// Registers a new user with the provided registration details.
         ///// </summary>
@@ -31,7 +34,7 @@ namespace Bank.API.Controllers
         //    var result = await _service.RegisterAsync(registerDTO);
         //    return Created("", result);
         //}
-       // ==========================
+        // ==========================
         /// <summary>
         /// Authenticates a user with the provided login credentials and returns a JWT token if successful.
         /// </summary>
@@ -62,6 +65,15 @@ namespace Bank.API.Controllers
             return permissions is null
                 ? NotFound(ApiResponse<object>.Fail("المستخدم غير موجود.", null, 404))
                 : Ok(ApiResponse<MyPermissionsDto>.SuccessResponse(permissions));
+        }
+        [HttpGet("me/group")]
+        [Authorize]
+        [ProducesResponseType(typeof(ApiResponse<MyGroupDTO>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetMyGroup()
+        {
+            var userId = CurrentUserId;
+            var group = await _service.GetMyGroupAsync(userId.ToString());
+            return Ok(group);
         }
 
     }

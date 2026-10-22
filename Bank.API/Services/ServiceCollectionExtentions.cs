@@ -113,7 +113,9 @@ namespace Bank.API.Services
             services.AddScoped<CertificateSyncJob>();
             services.AddScoped<CertificateExtractionJob>();
             services.AddScoped<IMapService, MapService>();
-
+            services.AddSingleton<IMemberLocationManager, MemberLocationManager>();
+            services.AddScoped<IMemberLocationService, MemberLocationService>();
+            services.AddSingleton<IMemberLocationRequestSender, SignalRMemberLocationRequestSender>();
             // لو مش مسجّل بالفعل من الباتش اللي فات (استخراج الإحداثيات):
             services.AddHttpClient("MapsLinkResolver", client => client.Timeout = TimeSpan.FromSeconds(5))
                 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
