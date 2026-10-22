@@ -458,6 +458,12 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("text")
                         .HasColumnName("processing_error");
 
+                    b.Property<string>("RecorderName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("recorder_name");
+
                     b.Property<DateTime>("StartedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")

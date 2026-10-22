@@ -42,13 +42,19 @@ public class LiveCheckHub : Hub
         _scopeFactory = scopeFactory;
     }
 
-    public async Task StartSession(string district, string street, string? excelSheetName)
+    public async Task StartSession(string recorderName, string district, string street, string? excelSheetName)
     {
+        if (string.IsNullOrWhiteSpace(recorderName))
+        {
+            await Clients.Caller.SendAsync("Error", new { message = "اسم المسجل مطلوب." });
+            return;
+        }
         var userId = GetUserId();
 
         try
         {
-            var (session, checkFileId) = await _sessionService.CreateSessionAsync(userId, district, street, excelSheetName);
+
+            var (session, checkFileId) = await _sessionService.CreateSessionAsync(userId, recorderName, district, street, excelSheetName);
             var aiSession = await _aiConnector.StartSessionAsync(Context.ConnectionAborted);
 
             var state = new LiveCheckConnectionState
@@ -68,10 +74,11 @@ public class LiveCheckHub : Hub
             // للنتايج شغال في الخلفية طول عمر الجلسة.
             state.ListenTask = ListenForDetectionsAsync(Context.ConnectionId, state);
 
-            await Clients.Caller.SendAsync("SessionStarted", new { sessionId = session.Id, displayName = session.DisplayName });
+            await Clients.Caller.SendAsync("SessionStarted", new { sessionId = session.Id, displayName = session.DisplayName, recorderName = session.RecorderName });
         }
         catch (Exception ex)
         {
+         
             _logger.LogError(ex, "Failed to start live check session for user {UserId}", userId);
             await Clients.Caller.SendAsync("Error", new { message = "تعذّر بدء جلسة التشييك." });
         }

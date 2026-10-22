@@ -8,6 +8,7 @@ public record LiveCheckPlateResultDto(
 
 public class CreateManualLiveCheckRequestDto
 {
+    public string RecorderName { get; init; } = null!;
     public string District { get; set; } = null!;
     public string Street { get; set; } = null!;
     public string? ExcelSheetName { get; set; }
@@ -20,7 +21,7 @@ public class CreateManualLiveCheckRequestDto
 public record ManualLiveCheckResultDto(Guid SessionId, string DisplayName, LiveCheckPlateResultDto Plate);
 
 public record CheckSessionSummaryDto(
-    Guid Id, string DisplayName, SessionStatus Status, int TotalPlates,
+    Guid Id, string DisplayName, string RecorderName, SessionStatus Status, int TotalPlates,
     int MatchedCount, int UnmatchedCount, DateTime StartedAt, DateTime? EndedAt);
 
 public record LiveCheckLogRowDto(

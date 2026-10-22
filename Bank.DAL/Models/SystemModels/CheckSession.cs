@@ -21,7 +21,7 @@ public class CheckSession : BaseEntity
     public string Street { get; set; } = null!;
     public string ExcelSheetName { get; set; } = null!;
     public string DisplayName { get; set; } = null!;
-
+    public string RecorderName { get; set; } = null!;
     public int TotalPlates { get; set; }
     public SessionStatus Status { get; set; } = SessionStatus.Recording;
     public string? ProcessingError { get; set; }

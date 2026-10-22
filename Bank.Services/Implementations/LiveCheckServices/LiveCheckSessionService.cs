@@ -27,8 +27,10 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     }
 
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
-        Guid userId, string district, string street, string? excelSheetName, CancellationToken cancellationToken = default)
+        Guid userId, string recorderName, string district, string street, string? excelSheetName, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(recorderName))
+            throw new ArgumentException("اسم المسجل مطلوب.", nameof(recorderName));
         var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
         if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
 
@@ -45,6 +47,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         var session = new CheckSession
         {
             UserId = userId,
+            RecorderName = recorderName,
             GroupId = userScope.GroupId,
             CheckFileId = activeCheckFileId,
             District = district,
@@ -236,10 +239,11 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         {
             return ApiResponse<ManualLiveCheckResultDto>.Fail("رقم اللوحة مطلوب.", null, 400);
         }
+        if (string.IsNullOrWhiteSpace(request.RecorderName))
+            return ApiResponse<ManualLiveCheckResultDto>.Fail("اسم المسجل مطلوب.", null, 400);
+        var (session, checkFileId) = await CreateSessionAsync(userId, request.RecorderName, request.District, request.Street, request.ExcelSheetName, cancellationToken);
 
-        var (session, checkFileId) = await CreateSessionAsync(userId, request.District, request.Street, request.ExcelSheetName, cancellationToken);
-
-        // ⭐ بنقفلها فورًا كـ session كاملة — زي التشيك اليدوي في التسجيل بالظبط، standalone من غير streaming
+        // ⭐ بنقفلها فورًا كـ session كاملة — زي التشيك اليدوي في التسجيل بالظبط， standalone من غير streaming
         await _dbContext.CheckSessions
             .Where(s => s.Id == session.Id)
             .ExecuteUpdateAsync(setters => setters
@@ -278,6 +282,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             {
                 s.Id,
                 s.DisplayName,
+                
+                s.RecorderName,
                 s.Status,
                 s.TotalPlates,
                 s.StartedAt,
@@ -287,7 +293,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .ToListAsync(cancellationToken);
 
         var items = sessions.Select(s => new CheckSessionSummaryDto(
-            s.Id, s.DisplayName, s.Status, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.StartedAt, s.EndedAt))
+            s.Id, s.DisplayName,s.RecorderName, s.Status, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.StartedAt, s.EndedAt))
             .ToList();
 
         return ApiResponse<List<CheckSessionSummaryDto>>.SuccessResponse(items);
@@ -308,7 +314,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Take(pageSize)
             .Select(l => new LiveCheckLogRowDto(
                 l.Id, l.NormalizedPlate, l.Location, l.CheckedAt, l.District, l.Street,
-                l.User.FullName, l.VehicleType, l.IsMatched))
+                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched))
             .ToListAsync(cancellationToken);
         var result = new PagedResult<LiveCheckLogRowDto>
         {
@@ -341,7 +347,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Select(l => new
             {
                 l.NormalizedPlate, l.Location, l.CheckedAt, l.District, l.Street,
-                RecorderName = l.User.FullName, l.VehicleType, l.IsMatched
+                RecorderName = l.CheckSession.RecorderName, l.VehicleType, l.IsMatched
             })
             .ToListAsync(cancellationToken);
 
