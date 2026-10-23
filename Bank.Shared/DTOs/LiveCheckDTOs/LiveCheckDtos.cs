@@ -27,3 +27,12 @@ public record CheckSessionSummaryDto(
 public record LiveCheckLogRowDto(
     long Id, string NormalizedPlate, string? LocationLink, DateTime CheckedAt,
     string? District, string? Street, string RecorderName, string? VehicleType, bool IsMatched);
+
+// نفس فكرة ConvertArchiveToDataFileRequestDto بتاعة التسجيل — حدد واحد بس من الاتنين.
+public class ConvertCheckLogsToDataFileRequestDto
+{
+    public Guid? ExistingDataFileId { get; set; }
+    public string? NewDataFileName { get; set; }
+}
+
+public record ConvertCheckLogsToDataFileResponseDto(Guid DataFileId, int AppendedCount);

@@ -754,6 +754,14 @@ namespace Bank.DAL.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<DateTime?>("AppendedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("appended_at");
+
+                    b.Property<Guid?>("AppendedToDataFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("appended_to_data_file_id");
+
                     b.Property<Guid>("CheckSessionId")
                         .HasColumnType("uuid")
                         .HasColumnName("check_session_id");
@@ -823,6 +831,8 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("vehicle_type");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AppendedToDataFileId");
 
                     b.HasIndex("GroupId");
 

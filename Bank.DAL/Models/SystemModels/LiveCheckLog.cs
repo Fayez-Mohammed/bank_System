@@ -30,4 +30,9 @@ public class LiveCheckLog : BaseEntityLong
     public virtual CheckPlate? MatchedCheckPlate { get; set; }
 
     public DateTime CheckedAt { get; set; } = DateTime.UtcNow;
+
+    // لو الصف ده اتحوّل لملف داتا قبل كده، عشان المرة الجاية نلحق الجديد بس
+    // (زي RecordingArchivePlate بالظبط — التحويل تراكمي ومش بيمسح التشييك).
+    public Guid? AppendedToDataFileId { get; set; }
+    public DateTime? AppendedAt { get; set; }
 }

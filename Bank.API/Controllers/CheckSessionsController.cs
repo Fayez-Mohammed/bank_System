@@ -88,6 +88,23 @@ public class CheckSessionsController : ControllerBase
         var (bytes, fileName) = await _service.ExportAllAsync(CurrentUserId, cancellationToken);
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
+    /// <summary>
+    /// بيحوّل كل لوحات التشييك اللي لسه ما اتحوّلتش لملف داتا — append على ملف داتا موجود
+    /// (ExistingDataFileId) أو ملف داتا جديد (NewDataFileName). التشييك نفسه مش بيتمسح،
+    /// والمرة الجاية بياخد الجديد بس.
+    /// </summary>
+    [HttpPost("convert-to-data-file")]
+    [ProducesResponseType(typeof(ApiResponse<ConvertCheckLogsToDataFileResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ConvertToDataFile(
+        [FromBody] ConvertCheckLogsToDataFileRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.ConvertToDataFileAsync(CurrentUserId, request, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
     [HttpDelete("{sessionId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 404)]

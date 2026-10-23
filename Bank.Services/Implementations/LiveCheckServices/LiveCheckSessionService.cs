@@ -18,12 +18,18 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     private readonly ILogger<LiveCheckSessionService> _logger;
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
+    private readonly IFileStorageService _fileStorage;
+    private readonly IPermissionService _permissions;
 
-    public LiveCheckSessionService(ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext)
+    public LiveCheckSessionService(
+        ILogger<LiveCheckSessionService> logger, IUnitOfWork unit, AppDbContext dbContext,
+        IFileStorageService fileStorage, IPermissionService permissions)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
+        _fileStorage = fileStorage;
+        _permissions = permissions;
     }
 
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
@@ -524,6 +530,179 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         workbook.SaveAs(stream);
         return (stream.ToArray(), $"كل-التشييك-{DateTime.UtcNow:yyyy-MM-dd}.xlsx");
     }
+    public async Task<ApiResponse<ConvertCheckLogsToDataFileResponseDto>> ConvertToDataFileAsync(
+        Guid userId, ConvertCheckLogsToDataFileRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var hasExisting = request.ExistingDataFileId.HasValue;
+        var hasNewName = !string.IsNullOrWhiteSpace(request.NewDataFileName);
+
+        if (hasExisting == hasNewName)
+        {
+            return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail(
+                "اختار إما ملف داتا موجود أو اسم لملف جديد، مش الاتنين ولا من غيرهم.", null, 400);
+        }
+
+        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
+        if (userScope is null) return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail("المستخدم غير موجود.");
+
+        var allowed = hasExisting
+            ? await _permissions.CanManageDataFileAsync(userId, request.ExistingDataFileId!.Value, cancellationToken)
+            : await _permissions.CanUploadDataFilesAsync(userId, cancellationToken);
+        if (!allowed)
+        {
+            return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, 403);
+        }
+
+        // كل لوحات جدول التشييك (نفس نطاق GetAllPlatesAsync) اللي لسه ما اتحوّلتش قبل كده —
+        // التحويل تراكمي، مش بيمسح التشييك، فلو اتعمل تاني بياخد الجديد بس.
+        var pendingQuery = _dbContext.LiveCheckLogs.Include(l => l.CheckSession).AsQueryable();
+        pendingQuery = userScope.GroupId.HasValue
+            ? pendingQuery.Where(l => l.CheckSession.GroupId == userScope.GroupId.Value)
+            : pendingQuery.Where(l => l.CheckSession.GroupId == null && l.CheckSession.UserId == userId);
+
+        var pendingRows = await pendingQuery
+            .Where(l => l.AppendedToDataFileId == null)
+            .OrderBy(l => l.CheckedAt)
+            .ThenBy(l => l.Id)
+            .ToListAsync(cancellationToken);
+
+        if (pendingRows.Count == 0)
+        {
+            return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail("مفيش صفوف جديدة في التشييك لسه ما اتحوّلتش.", null, 400);
+        }
+
+        Guid dataFileId;
+
+        if (hasExisting)
+        {
+            // النطاق اتشيك فوق في CanManageDataFileAsync (بيشمل الجروب اللي الأدمن بيديره)،
+            // فمنعيدش فلترته بـ userScope.GroupId وإلا الأدمن ميلاقيش ملف جروبه.
+            var existingFile = await _dbContext.DataFiles
+                .Where(f => f.Id == request.ExistingDataFileId!.Value)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (existingFile is null)
+            {
+                return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail("ملف الداتا غير موجود.", null, 404);
+            }
+
+            dataFileId = existingFile.Id;
+
+            await _dbContext.DataFiles
+                .Where(f => f.Id == dataFileId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(f => f.RowCount, f => f.RowCount + pendingRows.Count), cancellationToken);
+        }
+        else
+        {
+            var fileName = request.NewDataFileName!.Trim();
+            if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)) fileName += ".xlsx";
+
+            var fileBytes = BuildHistoricalWorkbook(pendingRows);
+            var subFolder = userScope.GroupId.HasValue ? $"groups/{userScope.GroupId.Value}" : $"users/{userId}";
+
+            await using var memoryStream = new MemoryStream(fileBytes);
+            var storagePath = await _fileStorage.SaveAsync(memoryStream, fileName, subFolder, cancellationToken);
+
+            var nextSortOrder = await GetNextDataFileSortOrderAsync(userScope.GroupId, userId, cancellationToken);
+
+            var newDataFile = new DataFile
+            {
+                GroupId = userScope.GroupId,
+                OwnerId = userId,
+                FileName = fileName,
+                RowCount = pendingRows.Count,
+                IsActiveForFiltering = true,
+                StoragePath = storagePath,
+                ImportStatus = DataFileImportStatus.Completed,
+                SortOrder = nextSortOrder
+            };
+
+            await _unit.Repository<DataFile>().AddAsync(newDataFile);
+            await _unit.CompleteAsync();
+
+            dataFileId = newDataFile.Id;
+        }
+
+        var historicalPlates = pendingRows.Select(l => new HistoricalPlate
+        {
+            DataFileId = dataFileId,
+            UserId = l.UserId,
+            RawPlate = l.RawPlate,
+            NormalizedPlate = l.NormalizedPlate,
+            VehicleType = l.VehicleType,
+            District = l.District,
+            Street = l.Street,
+            RecorderName = l.CheckSession.RecorderName,
+            Location = l.Location,
+            RecordedAt = l.CheckedAt.ToString("yyyy-MM-dd HH:mm:ss")
+        });
+
+        await _dbContext.HistoricalPlates.AddRangeAsync(historicalPlates, cancellationToken);
+
+        var appendedAt = DateTime.UtcNow;
+        foreach (var row in pendingRows)
+        {
+            row.AppendedToDataFileId = dataFileId;
+            row.AppendedAt = appendedAt;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Converted {Count} live check rows into DataFile {DataFileId} for user {UserId}",
+            pendingRows.Count, dataFileId, userId);
+
+        return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.SuccessResponse(
+            new ConvertCheckLogsToDataFileResponseDto(dataFileId, pendingRows.Count));
+    }
+
+    // نفس أعمدة RecordingArchiveService.BuildHistoricalWorkbook عشان ملف الداتا يتقري زي أي ملف داتا تاني.
+    private static byte[] BuildHistoricalWorkbook(List<LiveCheckLog> rows)
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("الداتا");
+        sheet.RightToLeft = true;
+
+        sheet.Cell(1, 1).Value = "رقم اللوحة";
+        sheet.Cell(1, 2).Value = "ملاحظات";
+        sheet.Cell(1, 3).Value = "نوع السيارة";
+        sheet.Cell(1, 4).Value = "الشارع";
+        sheet.Cell(1, 5).Value = "الحي";
+        sheet.Cell(1, 6).Value = "GPS";
+        sheet.Cell(1, 7).Value = "تاريخ التسجيل";
+        sheet.Cell(1, 8).Value = "اسم المسجّل";
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            sheet.Cell(r, 1).Value = row.RawPlate;
+            sheet.Cell(r, 3).Value = row.VehicleType;
+            sheet.Cell(r, 4).Value = row.Street;
+            sheet.Cell(r, 5).Value = row.District;
+            sheet.Cell(r, 6).Value = row.Location;
+            sheet.Cell(r, 7).Value = row.CheckedAt.ToString("yyyy-MM-dd HH:mm:ss");
+            sheet.Cell(r, 8).Value = row.CheckSession.RecorderName;
+            r++;
+        }
+        sheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return stream.ToArray();
+    }
+
+    private async Task<int> GetNextDataFileSortOrderAsync(Guid? groupId, Guid userId, CancellationToken cancellationToken)
+    {
+        var query = _dbContext.DataFiles.AsNoTracking();
+        query = groupId.HasValue
+            ? query.Where(f => f.GroupId == groupId.Value)
+            : query.Where(f => f.GroupId == null && f.OwnerId == userId);
+
+        var maxOrder = await query.Select(f => (int?)f.SortOrder).MaxAsync(cancellationToken);
+        return (maxOrder ?? 0) + 1;
+    }
+
+
     private async Task<string> GenerateUniqueDisplayNameAsync(
         Guid? groupId, Guid userId, string baseName, CancellationToken cancellationToken)
     {
