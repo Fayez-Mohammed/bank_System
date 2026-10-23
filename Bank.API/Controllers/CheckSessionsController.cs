@@ -66,7 +66,28 @@ public class CheckSessionsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ex.Message));
         }
     }
+    /// <summary>
+    /// كل لوحات التشييك لكل الجلسات (مش جلسة معينة)، الأحدث الأول، مع paging.
+    /// </summary>
+    [HttpGet("plates")]
+    [ProducesResponseType(typeof(ApiResponse<PagedResult<LiveCheckLogRowDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllPlates(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken cancellationToken = default)
+    {
+        var result = await _service.GetAllPlatesAsync(CurrentUserId, page, pageSize, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 
+    /// <summary>
+    /// Export كل لوحات التشييك لكل الجلسات في ملف Excel واحد.
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportAll(CancellationToken cancellationToken)
+    {
+        var (bytes, fileName) = await _service.ExportAllAsync(CurrentUserId, cancellationToken);
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+    }
     [HttpDelete("{sessionId:guid}")]
     [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 404)]

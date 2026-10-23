@@ -427,7 +427,103 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         _logger.LogInformation("Deleted all {Count} check sessions for user {UserId}", count, userId);
         return ApiResponse<int>.SuccessResponse(count, $"اتمسح {count} جلسة تشييك.");
     }
+    // كل لوحات اللي يشوفها اليوزر (نفس نطاق GetAllAsync: جروب أو مستقل)
+    private IQueryable<LiveCheckLog> GetScopedLogsQuery(UserScopeInfo userScope, Guid userId)
+    {
+        var query = _dbContext.LiveCheckLogs.AsNoTracking();
 
+        return userScope.GroupId.HasValue
+            ? query.Where(l => l.CheckSession.GroupId == userScope.GroupId.Value)
+            : query.Where(l => l.CheckSession.GroupId == null && l.CheckSession.UserId == userId);
+    }
+
+    public async Task<ApiResponse<PagedResult<LiveCheckLogRowDto>>> GetAllPlatesAsync(
+        Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
+        if (userScope is null) return ApiResponse<PagedResult<LiveCheckLogRowDto>>.Fail("المستخدم غير موجود.");
+
+        var query = GetScopedLogsQuery(userScope, userId);
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        // الأحدث الأول، وبالـ Id كترتيب ثانوي عشان الـ paging يفضل ثابت
+        var items = await query
+            .OrderByDescending(l => l.CheckedAt)
+            .ThenByDescending(l => l.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(l => new LiveCheckLogRowDto(
+                l.Id, l.NormalizedPlate, l.Location, l.CheckedAt, l.District, l.Street,
+                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched))
+            .ToListAsync(cancellationToken);
+
+        var result = new PagedResult<LiveCheckLogRowDto>
+        {
+            Items = items,
+            PageSize = pageSize,
+            PageNumber = page,
+            TotalCount = totalCount
+        };
+        return ApiResponse<PagedResult<LiveCheckLogRowDto>>.SuccessResponse(result);
+    }
+
+    public async Task<(byte[] FileBytes, string FileName)> ExportAllAsync(
+        Guid userId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
+        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
+
+        var rows = await GetScopedLogsQuery(userScope, userId)
+            .OrderByDescending(l => l.CheckedAt)
+            .ThenByDescending(l => l.Id)
+            .Select(l => new
+            {
+                l.NormalizedPlate,
+                l.Location,
+                l.CheckedAt,
+                l.District,
+                l.Street,
+                RecorderName = l.CheckSession.RecorderName,
+                l.VehicleType,
+                l.IsMatched,
+                SessionName = l.CheckSession.DisplayName
+            })
+            .ToListAsync(cancellationToken);
+
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("التشييك");
+        sheet.RightToLeft = true;
+
+        sheet.Cell(1, 1).Value = "رقم اللوحة";
+        sheet.Cell(1, 2).Value = "الحالة";
+        sheet.Cell(1, 3).Value = "الموقع";
+        sheet.Cell(1, 4).Value = "تاريخ التسجيل";
+        sheet.Cell(1, 5).Value = "الحي";
+        sheet.Cell(1, 6).Value = "الشارع";
+        sheet.Cell(1, 7).Value = "اسم المسجل";
+        sheet.Cell(1, 8).Value = "نوع العربية";
+        sheet.Cell(1, 9).Value = "الجلسة";
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            sheet.Cell(r, 1).Value = row.NormalizedPlate;
+            sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
+            sheet.Cell(r, 3).Value = row.Location;
+            sheet.Cell(r, 4).Value = row.CheckedAt;
+            sheet.Cell(r, 5).Value = row.District;
+            sheet.Cell(r, 6).Value = row.Street;
+            sheet.Cell(r, 7).Value = row.RecorderName;
+            sheet.Cell(r, 8).Value = row.VehicleType;
+            sheet.Cell(r, 9).Value = row.SessionName;
+            r++;
+        }
+        sheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return (stream.ToArray(), $"كل-التشييك-{DateTime.UtcNow:yyyy-MM-dd}.xlsx");
+    }
     private async Task<string> GenerateUniqueDisplayNameAsync(
         Guid? groupId, Guid userId, string baseName, CancellationToken cancellationToken)
     {

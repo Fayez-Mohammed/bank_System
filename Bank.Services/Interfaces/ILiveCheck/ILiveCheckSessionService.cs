@@ -46,4 +46,9 @@ public interface ILiveCheckSessionService
     Task<ApiResponse<bool>> DeleteAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
 
     Task<ApiResponse<int>> DeleteAllAsync(Guid userId, CancellationToken cancellationToken = default);
+    Task<ApiResponse<PagedResult<LiveCheckLogRowDto>>> GetAllPlatesAsync(
+    Guid userId, int page, int pageSize, CancellationToken cancellationToken = default);
+
+    Task<(byte[] FileBytes, string FileName)> ExportAllAsync(
+        Guid userId, CancellationToken cancellationToken = default);
 }
