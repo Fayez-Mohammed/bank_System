@@ -81,13 +81,15 @@ namespace Bank.Services.Implementations
 
             if (!user.IsActive)
                 return ApiResponse<LoginResponseDTO>.Fail("الحساب موقوف. تواصل مع الأدمن.", null, 403);
-
+            if (user.Role != UserRole.SuperAdmin)
+            {
+              
             // الجهاز بيتتشيك بعد الباسورد عشان محدش من غير باسورد يعرف حاجة عن الربط
             var deviceError = await EnforceDeviceAsync(
                 user, HashDeviceId(loginDTO.DeviceId), loginDTO.DeviceName, bindIfEmpty: true);
-            if (deviceError is not null)
-                return ApiResponse<LoginResponseDTO>.Fail(deviceError, null, 403);
-
+                if (deviceError is not null)
+                    return ApiResponse<LoginResponseDTO>.Fail(deviceError, null, 403);
+            }
             // جلسة واحدة للمستخدم: أي refresh tokens قديمة بتتلغي
             await _db.RefreshTokens
                 .Where(t => t.UserId == user.Id && !t.IsRevoked && !t.IsUsed)

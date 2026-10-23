@@ -1,8 +1,10 @@
-﻿using Bank.Shared.DTOs;
+﻿using Bank.Services.Interfaces;
+using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace Bank.API.Controllers;
 
@@ -13,13 +15,25 @@ public class SuperAdminAdminsController : ControllerBase
 {
     private readonly ISuperAdminService _superAdminService;
     private readonly ILogger<SuperAdminAdminsController> _logger;
+    private readonly IAuthService _authService;
 
-    public SuperAdminAdminsController(ISuperAdminService superAdminService, ILogger<SuperAdminAdminsController> logger)
+
+    public SuperAdminAdminsController(ISuperAdminService superAdminService, ILogger<SuperAdminAdminsController> logger, IAuthService authService)
     {
         _superAdminService = superAdminService;
         _logger = logger;
+        _authService = authService;
     }
+    private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
+    [HttpPost("{id:guid}/reset-device")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResetUserDevice(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _authService.ResetUserDeviceAsync(CurrentUserId, id, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
     /// <summary>
     /// Creates a new admin.
     /// </summary>
