@@ -449,7 +449,6 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("display_name");
 
                     b.Property<string>("District")
-                        .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")
                         .HasColumnName("district");
@@ -473,7 +472,6 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("processing_error");
 
                     b.Property<string>("RecorderName")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("recorder_name");
@@ -493,7 +491,6 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("status");
 
                     b.Property<string>("Street")
-                        .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")
                         .HasColumnName("street");

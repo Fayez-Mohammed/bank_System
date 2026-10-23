@@ -9,10 +9,10 @@ public interface ILiveCheckSessionService
 {
     // ⭐ الميثودز دي بتتنادى من الـ SignalR Hub (streaming lifecycle)
     Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
-        Guid userId, string recorderName, string district, string street, string? excelSheetName, CancellationToken cancellationToken = default);
+        Guid userId, string? recorderName, string? district, string? street, string? excelSheetName, CancellationToken cancellationToken = default);
 
     Task<LiveCheckPlateResultDto> ProcessDetectionAsync(
-        Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string district, string street,
+        Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string? district, string? street,
         double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
         CancellationToken cancellationToken = default);
 

@@ -42,13 +42,9 @@ public class LiveCheckHub : Hub
         _scopeFactory = scopeFactory;
     }
 
-    public async Task StartSession(string recorderName, string district, string street, string? excelSheetName)
+    // اسم المسجل والحي والشارع اختياريين — الموبايل يقدر يبعت null أو "".
+    public async Task StartSession(string? recorderName, string? district, string? street, string? excelSheetName)
     {
-        if (string.IsNullOrWhiteSpace(recorderName))
-        {
-            await Clients.Caller.SendAsync("Error", new { message = "اسم المسجل مطلوب." });
-            return;
-        }
         var userId = GetUserId();
 
         try
@@ -63,8 +59,8 @@ public class LiveCheckHub : Hub
                 UserId = userId,
                 GroupId = session.GroupId,
                 CheckFileId = checkFileId,
-                District = district,
-                Street = street,
+                District = session.District,
+                Street = session.Street,
                 AiSession = aiSession
             };
 

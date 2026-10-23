@@ -19,11 +19,11 @@ public class CheckSessionConfiguration : BaseEntityConfiguration<CheckSession>
         builder.Property(x => x.GroupId).HasColumnName("group_id");
         builder.Property(x => x.CheckFileId).HasColumnName("check_file_id");
 
-        builder.Property(x => x.District).HasColumnName("district").HasMaxLength(150).IsRequired();
-        builder.Property(x => x.Street).HasColumnName("street").HasMaxLength(150).IsRequired();
+        builder.Property(x => x.District).HasColumnName("district").HasMaxLength(150);
+        builder.Property(x => x.Street).HasColumnName("street").HasMaxLength(150);
         builder.Property(x => x.ExcelSheetName).HasColumnName("excel_sheet_name").HasMaxLength(150).IsRequired();
         builder.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(180).IsRequired();
-        builder.Property(x => x.RecorderName).HasColumnName("recorder_name").HasMaxLength(200).IsRequired();
+        builder.Property(x => x.RecorderName).HasColumnName("recorder_name").HasMaxLength(200);
     
 
         builder.Property(x => x.TotalPlates).HasColumnName("total_plates").HasDefaultValue(0);

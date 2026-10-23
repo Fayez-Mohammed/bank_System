@@ -17,11 +17,12 @@ public class CheckSession : BaseEntity
     public Guid? CheckFileId { get; set; }
     public virtual CheckFile? CheckFile { get; set; }
 
-    public string District { get; set; } = null!;
-    public string Street { get; set; } = null!;
+    // الحي والشارع واسم المسجل اختياريين في التشييك (عكس صفحة التسجيل).
+    public string? District { get; set; }
+    public string? Street { get; set; }
     public string ExcelSheetName { get; set; } = null!;
     public string DisplayName { get; set; } = null!;
-    public string RecorderName { get; set; } = null!;
+    public string? RecorderName { get; set; }
     public int TotalPlates { get; set; }
     public SessionStatus Status { get; set; } = SessionStatus.Recording;
     public string? ProcessingError { get; set; }

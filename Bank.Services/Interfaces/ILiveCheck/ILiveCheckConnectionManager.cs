@@ -13,8 +13,8 @@ public class LiveCheckConnectionState
     public Guid UserId { get; set; }
     public Guid? GroupId { get; set; }
     public Guid? CheckFileId { get; set; }
-    public string District { get; set; } = null!;
-    public string Street { get; set; } = null!;
+    public string? District { get; set; }
+    public string? Street { get; set; }
     public ILiveCheckAiSession AiSession { get; set; } = null!;
     public double? LastLatitude { get; set; }
     public double? LastLongitude { get; set; }
