@@ -115,12 +115,13 @@ namespace Bank.Services.Implementations
             var user = stored.User;
             if (!user.IsActive)
                 return ApiResponse<LoginResponseDTO>.Fail("الحساب موقوف. تواصل مع الأدمن.", null, 403);
-
-            var deviceError = await EnforceDeviceAsync(
-                user, HashDeviceId(request.DeviceId), null, bindIfEmpty: false, ct);
-            if (deviceError is not null)
-                return ApiResponse<LoginResponseDTO>.Fail(deviceError, null, 403);
-
+            if (user.Role != UserRole.SuperAdmin)
+            {
+                var deviceError = await EnforceDeviceAsync(
+                    user, HashDeviceId(request.DeviceId), null, bindIfEmpty: false, ct);
+                if (deviceError is not null)
+                    return ApiResponse<LoginResponseDTO>.Fail(deviceError, null, 403);
+            }
             // استهلاك ذري: لو طلبين جم بنفس الـ token في نفس اللحظة، واحد بس بينجح
             var consumed = await _db.RefreshTokens
                 .Where(t => t.Id == stored.Id && !t.IsUsed && !t.IsRevoked)
