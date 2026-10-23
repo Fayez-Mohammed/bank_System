@@ -8,6 +8,7 @@ using Bank.Shared.DTOs.AdminDTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.Enums;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;
@@ -533,9 +534,24 @@ namespace Bank.Services.Implementations
             return await GetUserByIdAsync(userId, ct);
         }
 
+        //public async Task<ApiResponse<bool>> SetUserToggleActiveStatusAsync(Guid userId, CancellationToken ct = default)
+        //{
+
+        //    var user = await _userService.GetByIdAsync(userId.ToString());
+        //    if (user is null || user.Role != UserRole.User)
+        //    {
+        //        _logger.LogWarning("SetUserActiveStatus failed: {UserId} not found", userId);
+        //        return ApiResponse<bool>.Fail("User not found.", null, 404);
+        //    }
+
+        //    user.IsActive = !user.IsActive;
+        //    await _unitOfWork.CompleteAsync();
+
+        //    _logger.LogInformation("User {UserId} active status set to {IsActive}", userId, user.IsActive);
+        //    return ApiResponse<bool>.SuccessResponse(true);
+        //}
         public async Task<ApiResponse<bool>> SetUserToggleActiveStatusAsync(Guid userId, CancellationToken ct = default)
         {
-          
             var user = await _userService.GetByIdAsync(userId.ToString());
             if (user is null || user.Role != UserRole.User)
             {
@@ -543,13 +559,50 @@ namespace Bank.Services.Implementations
                 return ApiResponse<bool>.Fail("User not found.", null, 404);
             }
 
+            // 1. عكس حالة الـ Active
             user.IsActive = !user.IsActive;
+
+            if (!user.IsActive)
+            {
+                var refreshTokens = await _context.RefreshTokens
+                    .Where(r => r.UserId == userId)
+                    .ToListAsync(ct);
+
+                if (refreshTokens.Any())
+                {
+                    _context.RefreshTokens.RemoveRange(refreshTokens);
+                }
+
+              //  await DisconnectUserLiveCheckSessionsAsync(userId);
+            }
+
             await _unitOfWork.CompleteAsync();
 
             _logger.LogInformation("User {UserId} active status set to {IsActive}", userId, user.IsActive);
             return ApiResponse<bool>.SuccessResponse(true);
         }
 
+        //// دالة مساعدة لقطع الـ SignalR
+        //private async Task DisconnectUserLiveCheckSessionsAsync(Guid userId)
+        //{
+        //    // بنجيب الاتصالات النشطة للمستخدم من الـ LiveCheckConnectionManager
+        //    var activeConnections = _connections.GetConnectionsByUserId(userId);
+
+        //    foreach (var connectionId in activeConnections)
+        //    {
+        //        // نبعت إيفنت للفرونت إند يعرفه إن حسابه اتقفل
+        //        await _hubContext.Clients.Client(connectionId).SendAsync("AccountDeactivated", new { message = "تم تعطيل حسابك بواسطة الأدمن." });
+
+        //        // نلغي الـ Session ونقفل الاتصال
+        //        var state = _connections.Get(connectionId);
+        //        if (state is not null)
+        //        {
+        //            state.ListenCts.Cancel();
+        //            await state.AiSession.CloseAsync(CancellationToken.None);
+        //            _connections.Remove(connectionId);
+        //        }
+        //    }
+        //}
         public async Task<ApiResponse<UserResponseDto>> AssignUserToGroupAsync(Guid userId, AssignUserToGroupDto dto, CancellationToken ct = default)
         {
            

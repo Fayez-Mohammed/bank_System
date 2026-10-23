@@ -35,6 +35,16 @@ namespace Bank.DAL.Migrations
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
 
+                    b.Property<string>("BoundDeviceHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("bound_device_hash");
+
+                    b.Property<string>("BoundDeviceName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("bound_device_name");
+
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");
@@ -44,6 +54,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime?>("DeviceBoundAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("device_bound_at");
 
                     b.Property<string>("Email")
                         .HasMaxLength(256)

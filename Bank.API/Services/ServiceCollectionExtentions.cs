@@ -206,8 +206,8 @@ namespace Bank.API.Services
                     ValidateAudience = false,
                    // ValidAudience = configuration["Auth:JWT:Audience"],
 
-                    ValidateLifetime = false,
-                   // ClockSkew = TimeSpan.Zero
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromSeconds(30) 
                 };
                 options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
                 {

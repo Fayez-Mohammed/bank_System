@@ -1,4 +1,6 @@
-﻿using Bank.Shared.DTOs;
+﻿using Bank.Services.Implementations;
+using Bank.Services.Interfaces;
+using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AdminDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -14,11 +16,13 @@ public class AdminController : ControllerBase
 {
     private readonly IAdminService _adminService;
     private readonly ILogger<AdminController> _logger;
+    private readonly IAuthService _authService;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, IAuthService service)
     {
         _adminService = adminService;
         _logger = logger;
+        _authService = service;
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
@@ -28,7 +32,15 @@ public class AdminController : ControllerBase
     /// <param name="pagination">Pagination parameters</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Paginated list of group members</returns>
-
+    /// <summary>Unbinds a group member's device so they can bind a new one on next login.</summary>
+    [HttpPost("users/{id:guid}/reset-device")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResetMemberDevice(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _authService.ResetUserDeviceAsync(CurrentUserId, id, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
     [HttpGet("users")]
     [ProducesResponseType(typeof(ApiResponse<PagedResult<GroupMemberResponseDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]

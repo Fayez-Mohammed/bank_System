@@ -46,7 +46,24 @@ namespace Bank.API.Controllers
             var result=await _service.LoginAsync(loginDTO);
             return Ok(result);
         }
+        [HttpPost("refresh")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(ApiResponse<LoginResponseDTO>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<LoginResponseDTO>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<LoginResponseDTO>), StatusCodes.Status403Forbidden)]
+        public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequestDTO request, CancellationToken cancellationToken)
+        {
+            var result = await _service.RefreshAsync(request, cancellationToken);
+            return StatusCode(result.StatusCode, result);   // لازم status code حقيقي عشان الـ interceptor في الفرونت
+        }
 
+        [HttpPost("logout")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Logout([FromBody] LogoutRequestDTO request, CancellationToken cancellationToken)
+        {
+            var result = await _service.LogoutAsync(request, cancellationToken);
+            return StatusCode(result.StatusCode, result);
+        }
         // ==========================
         /// <summary>
         /// Returns the current user's permissions, read from the database (they are not in the JWT),

@@ -47,7 +47,9 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
         builder.Property(x => x.GroupId)
             .HasColumnName("group_id")
             .IsRequired(false);
-
+        builder.Property(x => x.BoundDeviceHash).HasColumnName("bound_device_hash").HasMaxLength(64);
+        builder.Property(x => x.BoundDeviceName).HasColumnName("bound_device_name").HasMaxLength(150);
+        builder.Property(x => x.DeviceBoundAt).HasColumnName("device_bound_at");
         builder.HasIndex(x => x.GroupId);
         builder.HasOne(x => x.Group)
             .WithMany(g => g.Members)
