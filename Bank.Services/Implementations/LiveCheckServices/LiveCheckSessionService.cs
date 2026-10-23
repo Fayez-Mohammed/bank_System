@@ -33,12 +33,15 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     }
 
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
-        Guid userId, string recorderName, string district, string street, string? excelSheetName, CancellationToken cancellationToken = default)
+        Guid userId, string? recorderName, string? district, string? street, string? excelSheetName, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(recorderName))
-            throw new ArgumentException("اسم المسجل مطلوب.", nameof(recorderName));
-        recorderName = recorderName?.Trim() ?? "";
-        if (recorderName.Length > 200) throw new ArgumentException("اسم المسجل طويل جدًا.", nameof(recorderName));
+        // اسم المسجل والحي والشارع اختياريين في التشييك — الفاضي بيتخزن null.
+        recorderName = string.IsNullOrWhiteSpace(recorderName) ? null : recorderName.Trim();
+        district = string.IsNullOrWhiteSpace(district) ? null : district.Trim();
+        street = string.IsNullOrWhiteSpace(street) ? null : street.Trim();
+        if (recorderName?.Length > 200) throw new ArgumentException("اسم المسجل طويل جدًا.", nameof(recorderName));
+        if (district?.Length > 150) throw new ArgumentException("اسم الحي طويل جدًا.", nameof(district));
+        if (street?.Length > 150) throw new ArgumentException("اسم الشارع طويل جدًا.", nameof(street));
         var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
         if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
 
@@ -50,7 +53,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Select(f => (Guid?)f.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
-        var displayName = await GenerateUniqueDisplayNameAsync(userScope.GroupId, userId, street, cancellationToken);
+        // اسم الجلسة من الشارع، ولو مش موجود من الحي، ولو الاتنين فاضيين "تشييك".
+        var displayName = await GenerateUniqueDisplayNameAsync(
+            userScope.GroupId, userId, street ?? district ?? "تشييك", cancellationToken);
 
         var session = new CheckSession
         {
@@ -77,7 +82,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     }
 
     public async Task<LiveCheckPlateResultDto> ProcessDetectionAsync(
-        Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string district, string street,
+        Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string? district, string? street,
         double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
         CancellationToken cancellationToken = default)
     {
@@ -247,8 +252,6 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         {
             return ApiResponse<ManualLiveCheckResultDto>.Fail("رقم اللوحة مطلوب.", null, 400);
         }
-        if (string.IsNullOrWhiteSpace(request.RecorderName))
-            return ApiResponse<ManualLiveCheckResultDto>.Fail("اسم المسجل مطلوب.", null, 400);
         var (session, checkFileId) = await CreateSessionAsync(userId, request.RecorderName, request.District, request.Street, request.ExcelSheetName, cancellationToken);
 
         // ⭐ بنقفلها فورًا كـ session كاملة — زي التشيك اليدوي في التسجيل بالظبط， standalone من غير streaming
@@ -263,7 +266,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
         var detection = new AiPlateDetectedEvent(request.PlateNumber.Trim(), request.VehicleType, 0);
         var plateResult = await ProcessDetectionAsync(
-            session.Id, userId, userScope?.GroupId, checkFileId, request.District, request.Street,
+            session.Id, userId, userScope?.GroupId, checkFileId, session.District, session.Street,
             request.Latitude, request.Longitude, detection, CheckType.Manual, cancellationToken);
 
         _logger.LogInformation(

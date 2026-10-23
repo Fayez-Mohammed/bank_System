@@ -8,9 +8,10 @@ public record LiveCheckPlateResultDto(
 
 public class CreateManualLiveCheckRequestDto
 {
-    public string RecorderName { get; init; } = null!;
-    public string District { get; set; } = null!;
-    public string Street { get; set; } = null!;
+    // اختياريين في التشييك.
+    public string? RecorderName { get; init; }
+    public string? District { get; set; }
+    public string? Street { get; set; }
     public string? ExcelSheetName { get; set; }
     public string PlateNumber { get; set; } = null!;
     public string? VehicleType { get; set; }
@@ -21,12 +22,12 @@ public class CreateManualLiveCheckRequestDto
 public record ManualLiveCheckResultDto(Guid SessionId, string DisplayName, LiveCheckPlateResultDto Plate);
 
 public record CheckSessionSummaryDto(
-    Guid Id, string DisplayName, string RecorderName, SessionStatus Status, int TotalPlates,
+    Guid Id, string DisplayName, string? RecorderName, SessionStatus Status, int TotalPlates,
     int MatchedCount, int UnmatchedCount, DateTime StartedAt, DateTime? EndedAt);
 
 public record LiveCheckLogRowDto(
     long Id, string NormalizedPlate, string? LocationLink, DateTime CheckedAt,
-    string? District, string? Street, string RecorderName, string? VehicleType, bool IsMatched);
+    string? District, string? Street, string? RecorderName, string? VehicleType, bool IsMatched);
 
 // نفس فكرة ConvertArchiveToDataFileRequestDto بتاعة التسجيل — حدد واحد بس من الاتنين.
 public class ConvertCheckLogsToDataFileRequestDto
