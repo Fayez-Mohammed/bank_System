@@ -51,4 +51,9 @@ public interface ILiveCheckSessionService
 
     Task<(byte[] FileBytes, string FileName)> ExportAllAsync(
         Guid userId, CancellationToken cancellationToken = default);
+
+    // كل لوحات التشييك اللي لسه ما اتحوّلتش → append على ملف داتا موجود أو ملف داتا جديد
+    // (زي IRecordingArchiveService.ConvertToDataFileAsync بالظبط).
+    Task<ApiResponse<ConvertCheckLogsToDataFileResponseDto>> ConvertToDataFileAsync(
+        Guid userId, ConvertCheckLogsToDataFileRequestDto request, CancellationToken cancellationToken = default);
 }
