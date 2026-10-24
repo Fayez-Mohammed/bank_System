@@ -55,7 +55,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
         // اسم الجلسة من الشارع، ولو مش موجود من الحي، ولو الاتنين فاضيين "تشييك".
         var displayName = await GenerateUniqueDisplayNameAsync(
-            userScope.GroupId, userId, street ?? district ?? "تشييك", cancellationToken);
+      userId, street ?? district ?? "تشييك", cancellationToken);
 
         var session = new CheckSession
         {
@@ -279,21 +279,14 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
     public async Task<ApiResponse<List<CheckSessionSummaryDto>>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) return ApiResponse<List<CheckSessionSummaryDto>>.Fail("المستخدم غير موجود.");
-
-        var query = _dbContext.CheckSessions.AsNoTracking();
-        query = userScope.GroupId.HasValue
-            ? query.Where(s => s.GroupId == userScope.GroupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == userId);
-
-        var sessions = await query
+        var sessions = await _dbContext.CheckSessions
+            .AsNoTracking()
+            .Where(s => s.UserId == userId)
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new
             {
                 s.Id,
                 s.DisplayName,
-                
                 s.RecorderName,
                 s.Status,
                 s.TotalPlates,
@@ -304,12 +297,11 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .ToListAsync(cancellationToken);
 
         var items = sessions.Select(s => new CheckSessionSummaryDto(
-            s.Id, s.DisplayName,s.RecorderName, s.Status, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.StartedAt, s.EndedAt))
+            s.Id, s.DisplayName, s.RecorderName, s.Status, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.StartedAt, s.EndedAt))
             .ToList();
 
         return ApiResponse<List<CheckSessionSummaryDto>>.SuccessResponse(items);
     }
-
     public async Task<ApiResponse<PagedResult<LiveCheckLogRowDto>>> GetPlatesAsync(
         Guid sessionId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
     {
@@ -340,14 +332,11 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
         Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
-
         var session = await _dbContext.CheckSessions
-            .AsNoTracking()
-            .Where(ScopeFilter(userScope.GroupId, userId, sessionId))
-            .Select(s => s.DisplayName)
-            .FirstOrDefaultAsync(cancellationToken);
+      .AsNoTracking()
+      .Where(ScopeFilter(userId, sessionId))
+      .Select(s => s.DisplayName)
+      .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null) throw new KeyNotFoundException("التشييك غير موجود.");
 
@@ -397,11 +386,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
     public async Task<ApiResponse<bool>> DeleteAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.CheckSessions
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, userId, sessionId), cancellationToken);
+     .FirstOrDefaultAsync(ScopeFilter(userId, sessionId), cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التشييك غير موجود.", null, 404);
 
@@ -419,13 +405,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
     public async Task<ApiResponse<int>> DeleteAllAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) return ApiResponse<int>.Fail("المستخدم غير موجود.");
-
-        var query = _dbContext.CheckSessions.AsQueryable();
-        query = userScope.GroupId.HasValue
-            ? query.Where(s => s.GroupId == userScope.GroupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == userId);
+        var query = _dbContext.CheckSessions.Where(s => s.UserId == userId);
 
         var count = await query.CountAsync(cancellationToken);
         if (count == 0) return ApiResponse<int>.SuccessResponse(0, "مفيش جلسات تشييك أصلاً.");
@@ -437,22 +417,18 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         return ApiResponse<int>.SuccessResponse(count, $"اتمسح {count} جلسة تشييك.");
     }
     // كل لوحات اللي يشوفها اليوزر (نفس نطاق GetAllAsync: جروب أو مستقل)
-    private IQueryable<LiveCheckLog> GetScopedLogsQuery(UserScopeInfo userScope, Guid userId)
+    private IQueryable<LiveCheckLog> GetScopedLogsQuery(Guid userId)
     {
-        var query = _dbContext.LiveCheckLogs.AsNoTracking();
-
-        return userScope.GroupId.HasValue
-            ? query.Where(l => l.CheckSession.GroupId == userScope.GroupId.Value)
-            : query.Where(l => l.CheckSession.GroupId == null && l.CheckSession.UserId == userId);
+        return _dbContext.LiveCheckLogs
+            .AsNoTracking()
+            .Where(l => l.CheckSession.UserId == userId);
     }
 
     public async Task<ApiResponse<PagedResult<LiveCheckLogRowDto>>> GetAllPlatesAsync(
         Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) return ApiResponse<PagedResult<LiveCheckLogRowDto>>.Fail("المستخدم غير موجود.");
 
-        var query = GetScopedLogsQuery(userScope, userId);
+        var query = GetScopedLogsQuery(userId); 
         var totalCount = await query.CountAsync(cancellationToken);
 
         // الأحدث الأول، وبالـ Id كترتيب ثانوي عشان الـ paging يفضل ثابت
@@ -479,12 +455,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     public async Task<(byte[] FileBytes, string FileName)> ExportAllAsync(
         Guid userId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
-
-        var rows = await GetScopedLogsQuery(userScope, userId)
+        var rows = await GetScopedLogsQuery(userId)      // في ExportAllAsync
             .OrderByDescending(l => l.CheckedAt)
-            .ThenByDescending(l => l.Id)
+                    .ThenByDescending(l => l.Id)
             .Select(l => new
             {
                 l.NormalizedPlate,
@@ -556,15 +529,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             return ApiResponse<ConvertCheckLogsToDataFileResponseDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, 403);
         }
 
-        // كل لوحات جدول التشييك (نفس نطاق GetAllPlatesAsync) اللي لسه ما اتحوّلتش قبل كده —
-        // التحويل تراكمي، مش بيمسح التشييك، فلو اتعمل تاني بياخد الجديد بس.
-        var pendingQuery = _dbContext.LiveCheckLogs.Include(l => l.CheckSession).AsQueryable();
-        pendingQuery = userScope.GroupId.HasValue
-            ? pendingQuery.Where(l => l.CheckSession.GroupId == userScope.GroupId.Value)
-            : pendingQuery.Where(l => l.CheckSession.GroupId == null && l.CheckSession.UserId == userId);
-
-        var pendingRows = await pendingQuery
-            .Where(l => l.AppendedToDataFileId == null)
+        var pendingRows = await _dbContext.LiveCheckLogs
+            .Include(l => l.CheckSession)
+            .Where(l => l.CheckSession.UserId == userId && l.AppendedToDataFileId == null)
             .OrderBy(l => l.CheckedAt)
             .ThenBy(l => l.Id)
             .ToListAsync(cancellationToken);
@@ -707,15 +674,13 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
 
     private async Task<string> GenerateUniqueDisplayNameAsync(
-        Guid? groupId, Guid userId, string baseName, CancellationToken cancellationToken)
+        Guid userId, string baseName, CancellationToken cancellationToken)
     {
-        var query = _dbContext.CheckSessions.AsNoTracking();
-        query = groupId.HasValue
-            ? query.Where(s => s.GroupId == groupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == userId);
-
         var existingNames = new HashSet<string>(
-            await query.Where(s => s.DisplayName.StartsWith(baseName)).Select(s => s.DisplayName).ToListAsync(cancellationToken));
+            await _dbContext.CheckSessions.AsNoTracking()
+                .Where(s => s.UserId == userId && s.DisplayName.StartsWith(baseName))
+                .Select(s => s.DisplayName)
+                .ToListAsync(cancellationToken));
 
         if (!existingNames.Contains(baseName)) return baseName;
 
@@ -726,13 +691,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
     private async Task<bool> EnsureSessionInScopeAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken)
     {
-        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
-        if (userScope is null) return false;
-
         return await _dbContext.CheckSessions.AsNoTracking()
-            .AnyAsync(ScopeFilter(userScope.GroupId, userId, sessionId), cancellationToken);
+            .AnyAsync(ScopeFilter(userId, sessionId), cancellationToken);
     }
-
     private async Task<UserScopeInfo?> ResolveUserScopeAsync(Guid userId, CancellationToken cancellationToken)
     {
         return await _dbContext.Users
@@ -743,11 +704,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private static System.Linq.Expressions.Expression<Func<CheckSession, bool>> ScopeFilter(Guid? groupId, Guid userId, Guid sessionId)
+    private static System.Linq.Expressions.Expression<Func<CheckSession, bool>> ScopeFilter(Guid userId, Guid sessionId)
     {
-        return groupId.HasValue
-            ? s => s.Id == sessionId && s.GroupId == groupId.Value
-            : s => s.Id == sessionId && s.GroupId == null && s.UserId == userId;
+        return s => s.Id == sessionId && s.UserId == userId;
     }
 
     private record UserScopeInfo(Guid? GroupId);
