@@ -50,19 +50,21 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
         builder.HasIndex(x => new { x.UserId, x.StartedAt });
         builder.HasIndex(x => new { x.GroupId, x.StartedAt });
 
-        // بتضمن إن اسم العرض ما يتكررش جوه نفس الـ scope — الاعتماد الوحيد
-        // على "دور على الاسم في الميموري وبعدين Insert" فيه race condition؛
-        // الـ index ده شبكة الأمان الحقيقية (نعمل retry لو حصل Duplicate Key).
-        builder.HasIndex(x => new { x.GroupId, x.DisplayName })
-            .HasDatabaseName("UX_RecordingSessions_DisplayName_PerGroup")
-            .IsUnique()
-            .HasFilter("group_id IS NOT NULL");
+        //// بتضمن إن اسم العرض ما يتكررش جوه نفس الـ scope — الاعتماد الوحيد
+        //// على "دور على الاسم في الميموري وبعدين Insert" فيه race condition؛
+        //// الـ index ده شبكة الأمان الحقيقية (نعمل retry لو حصل Duplicate Key).
+        //builder.HasIndex(x => new { x.GroupId, x.DisplayName })
+        //    .HasDatabaseName("UX_RecordingSessions_DisplayName_PerGroup")
+        //    .IsUnique()
+        //    .HasFilter("group_id IS NOT NULL");
 
-        builder.HasIndex(x => new { x.UserId, x.DisplayName })
-            .HasDatabaseName("UX_RecordingSessions_DisplayName_PerSoloUser")
-            .IsUnique()
-            .HasFilter("group_id IS NULL");
-
+        //builder.HasIndex(x => new { x.UserId, x.DisplayName })
+        //    .HasDatabaseName("UX_RecordingSessions_DisplayName_PerSoloUser")
+        //    .IsUnique()
+        //    .HasFilter("group_id IS NULL");
+        builder.HasIndex(s => new { s.UserId, s.DisplayName })
+    .IsUnique()
+    .HasDatabaseName("UX_RecordingSessions_DisplayName_PerUser");
         builder.HasOne(x => x.Group)
             .WithMany(x => x.RecordingSessions)
             .HasForeignKey(x => x.GroupId)

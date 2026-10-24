@@ -14,9 +14,16 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NetTopologySuite.Geometries;
+using System.Linq.Expressions;
 
 namespace Bank.Services.Implementations;
 
+/// <summary>
+/// كل التسجيلات (RecordingSession) على مستوى اليوزر: اليوزر بيشوف ويعدّل ويحذف تسجيلاته هو بس،
+/// حتى لو هو عضو في جروب. الجروب بيفضل مستخدم في حاجتين بس:
+///   1) GroupId بيتخزن على التسجيل (للتقارير/الربط).
+///   2) ملف التشييك (CheckFile) النشط، لأنه مورد مشترك للجروب بيتطابق معاه التسجيل.
+/// </summary>
 public class RecordingSessionService : IRecordingSessionService
 {
     private const long MaxAudioSizeBytes = 50L * 1024 * 1024;
@@ -43,15 +50,13 @@ public class RecordingSessionService : IRecordingSessionService
         _backgroundJobClient = backgroundJobClient;
         _archiveService = archiveService;
     }
+
     public async Task<ApiResponse<RecordingSessionStatusDto>> GetStatusAsync(
         Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<RecordingSessionStatusDto>.Fail("المستخدم غير موجود.");
-
         var status = await _dbContext.RecordingSessions
             .AsNoTracking()
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .Where(ScopeFilter(currentUserId, sessionId))
             .Select(s => new RecordingSessionStatusDto(
                 s.Id, s.Status, s.TotalPlates, s.RecordedPlates.Count(p => p.IsMatched), s.ProcessingError))
             .FirstOrDefaultAsync(cancellationToken);
@@ -61,14 +66,13 @@ public class RecordingSessionService : IRecordingSessionService
             : ApiResponse<RecordingSessionStatusDto>.SuccessResponse(status);
     }
 
-
-  
     public async Task<ApiResponse<CreateRecordingSessionResponseDto>> CreateAsync(
         Guid userId, CreateRecordingSessionRequestDto request, CancellationToken cancellationToken = default)
     {
         var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
         if (userScope is null) return ApiResponse<CreateRecordingSessionResponseDto>.Fail("المستخدم غير موجود.");
 
+        // ملف التشييك مورد مشترك على مستوى الجروب: بنطابق التسجيل مع الملف النشط بتاع جروبه.
         var activeCheckFileId = await _dbContext.CheckFiles
             .Where(f => f.IsActive)
             .Where(f => userScope.GroupId.HasValue
@@ -77,7 +81,7 @@ public class RecordingSessionService : IRecordingSessionService
             .Select(f => (Guid?)f.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
-        var displayName = await GenerateUniqueDisplayNameAsync(userScope.GroupId, userId, request.Street, cancellationToken);
+        var displayName = await GenerateUniqueDisplayNameAsync(userId, request.Street, cancellationToken);
 
         var session = new RecordingSession
         {
@@ -86,7 +90,7 @@ public class RecordingSessionService : IRecordingSessionService
             CheckFileId = activeCheckFileId,
             District = request.District,
             Street = request.Street,
-            ExcelSheetName = request.ExcelSheetName??$"{request.Street}_{DateTime.UtcNow:yyyyMMdd}",
+            ExcelSheetName = request.ExcelSheetName ?? $"{request.Street}_{DateTime.UtcNow:yyyyMMdd}",
             DisplayName = displayName,
             TrackingMode = request.TrackingMode,
             TrackingIntervalSeconds = request.TrackingIntervalSeconds,
@@ -106,17 +110,17 @@ public class RecordingSessionService : IRecordingSessionService
             new CreateRecordingSessionResponseDto(session.Id, displayName, session.Status), statusCode: 201);
     }
 
-  
+    // الاسم فريد على مستوى اليوزر (مش الجروب): اتنين مختلفين ممكن يستخدموا نفس اسم الشارع.
+    // لازم يتطابق مع الـ unique index (user_id, display_name) في الداتابيز.
     private async Task<string> GenerateUniqueDisplayNameAsync(
-        Guid? groupId, Guid userId, string baseName, CancellationToken cancellationToken)
+        Guid userId, string baseName, CancellationToken cancellationToken)
     {
-        var query = _dbContext.RecordingSessions.AsNoTracking();
-        query = groupId.HasValue
-            ? query.Where(s => s.GroupId == groupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == userId);
-
         var existingNames = new HashSet<string>(
-            await query.Where(s => s.DisplayName.StartsWith(baseName)).Select(s => s.DisplayName).ToListAsync(cancellationToken));
+            await _dbContext.RecordingSessions
+                .AsNoTracking()
+                .Where(s => s.UserId == userId && s.DisplayName.StartsWith(baseName))
+                .Select(s => s.DisplayName)
+                .ToListAsync(cancellationToken));
 
         if (!existingNames.Contains(baseName)) return baseName;
 
@@ -160,11 +164,8 @@ public class RecordingSessionService : IRecordingSessionService
             return ApiResponse<bool>.Fail($"صيغة صوت غير مدعومة. المسموح: {string.Join(", ", AllowedAudioExtensions)}", null, 400);
         }
 
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
 
@@ -183,16 +184,12 @@ public class RecordingSessionService : IRecordingSessionService
 
     public async Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
         if (session.AudioUrl is null) return ApiResponse<bool>.Fail("مفيش صوت مرفوع أصلاً لإعادة المعالجة.", null, 400);
 
-       
         if (session.Status == SessionStatus.Processing)
         {
             return ApiResponse<bool>.Fail("التسجيل لسه بيتعالج دلوقتي.", null, 409);
@@ -210,15 +207,11 @@ public class RecordingSessionService : IRecordingSessionService
         return ApiResponse<bool>.SuccessResponse(true, "جاري إعادة المعالجة.");
     }
 
-
     public async Task<ApiResponse<bool>> UpdateAsync(
         Guid sessionId, Guid currentUserId, UpdateRecordingSessionRequestDto request, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
 
@@ -256,15 +249,9 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<List<RecordingSessionSummaryDto>>> GetAllAsync(
         Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<List<RecordingSessionSummaryDto>>.Fail("المستخدم غير موجود.");
-
-        var query = _dbContext.RecordingSessions.AsNoTracking();
-        query = userScope.GroupId.HasValue
-            ? query.Where(s => s.GroupId == userScope.GroupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == currentUserId);
-
-        var sessions = await query
+        var sessions = await _dbContext.RecordingSessions
+            .AsNoTracking()
+            .Where(s => s.UserId == currentUserId)
             .OrderByDescending(s => s.StartedAt)
             .Select(s => new
             {
@@ -283,7 +270,7 @@ public class RecordingSessionService : IRecordingSessionService
         var items = sessions.Select(s => new RecordingSessionSummaryDto(
             s.Id, s.DisplayName, s.Status,
             s.EndedAt.HasValue ? (int)(s.EndedAt.Value - s.StartedAt).TotalSeconds : null,
-            s.TotalGpsPoints, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount,s.IsRecord, s.StartedAt))
+            s.TotalGpsPoints, s.TotalPlates, s.MatchedCount, s.TotalPlates - s.MatchedCount, s.IsRecord, s.StartedAt))
             .ToList();
 
         return ApiResponse<List<RecordingSessionSummaryDto>>.SuccessResponse(items);
@@ -292,12 +279,9 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<RecordingSessionDetailDto>> GetByIdAsync(
         Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<RecordingSessionDetailDto>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .Where(ScopeFilter(currentUserId, sessionId))
             .Select(s => new RecordingSessionDetailDto(
                 s.Id, s.DisplayName, s.District, s.Street, s.ExcelSheetName, s.TrackingMode, s.TrackingIntervalSeconds,
                 s.Status, s.ProcessingError, s.TotalGpsPoints, s.TotalPlates, s.StartedAt, s.EndedAt, s.IsRecord, s.RecorderName))
@@ -309,8 +293,8 @@ public class RecordingSessionService : IRecordingSessionService
     }
 
     public Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetPlatesAsync(
-      Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default)
-      => GetPlatesInternalAsync(sessionId, currentUserId, page, pageSize, matchedOnly: false, cancellationToken);
+        Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default)
+        => GetPlatesInternalAsync(sessionId, currentUserId, page, pageSize, matchedOnly: false, cancellationToken);
 
     public Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetMatchedPlatesAsync(
         Guid sessionId, Guid currentUserId, int page, int pageSize, CancellationToken cancellationToken = default)
@@ -319,18 +303,19 @@ public class RecordingSessionService : IRecordingSessionService
     private async Task<ApiResponse<PagedResult<RecordedPlateRowDto>>> GetPlatesInternalAsync(
         Guid sessionId, Guid currentUserId, int page, int pageSize, bool matchedOnly, CancellationToken cancellationToken)
     {
-        var inScope = await EnsureSessionInScopeAsync(sessionId, currentUserId, cancellationToken);
-        if (!inScope) return ApiResponse<PagedResult<RecordedPlateRowDto>>.Fail("التسجيل غير موجود.", null, 404);
+        var session = await _dbContext.RecordingSessions
+            .AsNoTracking()
+            .Where(ScopeFilter(currentUserId, sessionId))
+            .Select(s => new { s.RecorderName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (session is null) return ApiResponse<PagedResult<RecordedPlateRowDto>>.Fail("التسجيل غير موجود.", null, 404);
 
         var query = _dbContext.RecordedPlates.AsNoTracking().Where(p => p.SessionId == sessionId);
         if (matchedOnly) query = query.Where(p => p.IsMatched);
 
         var totalCount = await query.CountAsync(cancellationToken);
-        var session = await _dbContext.RecordingSessions
-            .AsNoTracking()
-            .Where(s => s.Id == sessionId)
-            .Select(s => new { s.RecorderName })
-            .FirstOrDefaultAsync(cancellationToken);
+
         var rows = await query
             .OrderBy(p => p.SequenceNumber)
             .Skip((page - 1) * pageSize)
@@ -352,15 +337,13 @@ public class RecordingSessionService : IRecordingSessionService
         };
         return ApiResponse<PagedResult<RecordedPlateRowDto>>.SuccessResponse(result);
     }
+
     public async Task<(Stream Stream, string ContentType, string FileName)> GetAudioAsync(
         Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .Where(ScopeFilter(currentUserId, sessionId))
             .Select(s => new { s.AudioUrl, s.DisplayName })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -374,13 +357,10 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
         Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
-            .Select(s => new { s.DisplayName, s.RecorderName,s.ExcelSheetName })
+            .Where(ScopeFilter(currentUserId, sessionId))
+            .Select(s => new { s.DisplayName, s.RecorderName, s.ExcelSheetName })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null) throw new KeyNotFoundException("التسجيل غير موجود.");
@@ -389,7 +369,7 @@ public class RecordingSessionService : IRecordingSessionService
             .AsNoTracking()
             .Where(p => p.SessionId == sessionId)
             .OrderBy(p => p.SequenceNumber)
-            .Select(p => new { p.NormalizedPlate/*, p.IsMatched*/, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location })
+            .Select(p => new { p.NormalizedPlate, p.Notes, p.VehicleType, p.Street, p.District, p.RecordedAt, p.Location })
             .ToListAsync(cancellationToken);
 
         using var workbook = new XLWorkbook();
@@ -397,7 +377,6 @@ public class RecordingSessionService : IRecordingSessionService
         sheet.RightToLeft = true;
 
         sheet.Cell(1, 1).Value = "رقم اللوحة";
-       // sheet.Cell(1, 2).Value = "الحالة";
         sheet.Cell(1, 2).Value = "ملاحظات";
         sheet.Cell(1, 3).Value = "نوع السيارة";
         sheet.Cell(1, 4).Value = "الشارع";
@@ -410,7 +389,6 @@ public class RecordingSessionService : IRecordingSessionService
         foreach (var row in rows)
         {
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
-           // sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
             sheet.Cell(r, 2).Value = row.Notes;
             sheet.Cell(r, 3).Value = row.VehicleType;
             sheet.Cell(r, 4).Value = row.Street;
@@ -430,25 +408,23 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<AppendToDataFileResultDto>> AppendToDataFileAsync(
         Guid sessionId, Guid currentUserId, AppendToDataFileRequestDto request, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<AppendToDataFileResultDto>.Fail("المستخدم غير موجود.");
-
         var dataFile = await _dbContext.DataFiles
             .Where(f => f.Id == request.DataFileId)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (dataFile is null) return ApiResponse<AppendToDataFileResultDto>.Fail("ملف الداتا التاريخية غير موجود.", null, 404);
 
-        // إلحاق تسجيل على ملف داتا = append على الملف، فبياخد نفس قاعدة ملف الداتا
+        // ملفات الداتا لسه مورد على مستوى الجروب، فصلاحية الإلحاق عليها بتفضل بنفس القاعدة.
         if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFile.Id, cancellationToken))
         {
             return ApiResponse<AppendToDataFileResultDto>.Fail("ليس لديك صلاحية على ملف الداتا ده.", null, StatusCodes.Status403Forbidden);
         }
 
         var session = await _dbContext.RecordingSessions
-            .Where(ScopeFilter(userScope.GroupId, currentUserId, sessionId))
+            .Where(ScopeFilter(currentUserId, sessionId))
             .FirstOrDefaultAsync(cancellationToken);
         if (session is null) return ApiResponse<AppendToDataFileResultDto>.Fail("التسجيل غير موجود.", null, 404);
+
         var query = _dbContext.RecordedPlates.AsNoTracking().Where(p => p.SessionId == sessionId);
         query = request.AppendMode switch
         {
@@ -466,7 +442,6 @@ public class RecordingSessionService : IRecordingSessionService
             return ApiResponse<AppendToDataFileResultDto>.SuccessResponse(new AppendToDataFileResultDto(0), "مفيش لوحات مطابقة للشرط ده.");
         }
 
-  
         var historicalPlates = plates.Select(p => new HistoricalPlate
         {
             DataFileId = dataFile.Id,
@@ -478,8 +453,7 @@ public class RecordingSessionService : IRecordingSessionService
             Street = p.Street,
             Location = LocationLinkHelper.ToGoogleMapsLink(p.Location),
             RecordedAt = p.RecordedAt.ToString("yyyy-MM-dd HH:mm:ss"),
-            RecorderName=session.RecorderName
-           
+            RecorderName = session.RecorderName
         });
 
         await _dbContext.HistoricalPlates.AddRangeAsync(historicalPlates, cancellationToken);
@@ -499,11 +473,8 @@ public class RecordingSessionService : IRecordingSessionService
 
     public async Task<ApiResponse<bool>> DeleteAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
-
         var session = await _dbContext.RecordingSessions
-            .FirstOrDefaultAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
 
@@ -526,23 +497,22 @@ public class RecordingSessionService : IRecordingSessionService
         return ApiResponse<bool>.SuccessResponse(true);
     }
 
+    // بيمسح تسجيلات اليوزر هو بس (مش تسجيلات باقي أعضاء الجروب).
     public async Task<ApiResponse<int>> DeleteAllAsync(Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return ApiResponse<int>.Fail("المستخدم غير موجود.");
-
-        var query = _dbContext.RecordingSessions.AsQueryable();
-        query = userScope.GroupId.HasValue
-            ? query.Where(s => s.GroupId == userScope.GroupId.Value)
-            : query.Where(s => s.GroupId == null && s.UserId == currentUserId);
-
-        var sessions = await query.Select(s => new { s.Id, s.AudioUrl }).ToListAsync(cancellationToken);
+        var sessions = await _dbContext.RecordingSessions
+            .Where(s => s.UserId == currentUserId)
+            .Select(s => new { s.Id, s.AudioUrl })
+            .ToListAsync(cancellationToken);
 
         if (sessions.Count == 0) return ApiResponse<int>.SuccessResponse(0, "مفيش تسجيلات أصلاً.");
 
         var ids = sessions.Select(s => s.Id).ToList();
 
-         await _dbContext.RecordingSessions.Where(s => ids.Contains(s.Id)).ExecuteDeleteAsync(cancellationToken);
+        // شرط UserId مكرر هنا عمدًا كطبقة أمان تانية.
+        await _dbContext.RecordingSessions
+            .Where(s => s.UserId == currentUserId && ids.Contains(s.Id))
+            .ExecuteDeleteAsync(cancellationToken);
 
         foreach (var audioUrl in sessions.Where(s => s.AudioUrl is not null).Select(s => s.AudioUrl!))
         {
@@ -553,15 +523,11 @@ public class RecordingSessionService : IRecordingSessionService
         return ApiResponse<int>.SuccessResponse(sessions.Count, $"اتمسح {sessions.Count} تسجيل.");
     }
 
-    private async Task<bool> EnsureSessionInScopeAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken)
-    {
-        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
-        if (userScope is null) return false;
+    private Task<bool> EnsureSessionInScopeAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken)
+        => _dbContext.RecordingSessions.AsNoTracking()
+            .AnyAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
 
-        return await _dbContext.RecordingSessions.AsNoTracking()
-            .AnyAsync(ScopeFilter(userScope.GroupId, currentUserId, sessionId), cancellationToken);
-    }
-
+    // الجروب لسه مطلوب في إنشاء التسجيل (GroupId + ملف التشييك النشط) بس.
     private async Task<UserScopeInfo?> ResolveUserScopeAsync(Guid userId, CancellationToken cancellationToken)
     {
         return await _dbContext.Users
@@ -572,15 +538,12 @@ public class RecordingSessionService : IRecordingSessionService
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private static System.Linq.Expressions.Expression<Func<RecordingSession, bool>> ScopeFilter(Guid? groupId, Guid currentUserId, Guid sessionId)
-    {
-        return groupId.HasValue
-            ? s => s.Id == sessionId && s.GroupId == groupId.Value
-            : s => s.Id == sessionId && s.GroupId == null && s.UserId == currentUserId;
-    }
+    // الفلتر الوحيد المستخدم للوصول لتسجيل بعينه: لازم يكون بتاع اليوزر الحالي.
+    private static Expression<Func<RecordingSession, bool>> ScopeFilter(Guid currentUserId, Guid sessionId)
+        => s => s.Id == sessionId && s.UserId == currentUserId;
 
     public async Task<ApiResponse<ManualCheckResultDto>> CreateManualCheckAsync(
-    Guid userId, CreateManualCheckRequestDto request, CancellationToken cancellationToken = default)
+        Guid userId, CreateManualCheckRequestDto request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.PlateNumber))
         {
@@ -599,10 +562,9 @@ public class RecordingSessionService : IRecordingSessionService
             .FirstOrDefaultAsync(cancellationToken);
 
         var excelSheetName = string.IsNullOrWhiteSpace(request.ExcelSheetName) ? "تشييك يدوي" : request.ExcelSheetName.Trim();
-        var displayName = await GenerateUniqueDisplayNameAsync(userScope.GroupId, userId, request.Street, cancellationToken);
+        var displayName = await GenerateUniqueDisplayNameAsync(userId, request.Street, cancellationToken);
         var now = DateTime.UtcNow;
 
-     
         var session = new RecordingSession
         {
             UserId = userId,
@@ -617,7 +579,7 @@ public class RecordingSessionService : IRecordingSessionService
             TotalPlates = 1,
             Status = SessionStatus.Completed,
             RecorderName = request.RecorderName,
-            IsRecord =false,
+            IsRecord = false,
             StartedAt = now,
             EndedAt = now
         };
@@ -643,11 +605,11 @@ public class RecordingSessionService : IRecordingSessionService
 
         if (activeCheckFileId.HasValue)
         {
-           var result = await _dbContext.CheckPlates
+            var result = await _dbContext.CheckPlates
                 .Where(cp => cp.CheckFileId == activeCheckFileId.Value && cp.NormalizedPlate == normalized)
-                .Select(cp =>new{ Id = (long?)cp.Id, BankName = cp.BankName, VehicleType = cp.VehicleType })
+                .Select(cp => new { Id = (long?)cp.Id, BankName = cp.BankName, VehicleType = cp.VehicleType })
                 .FirstOrDefaultAsync(cancellationToken);
-            
+
             if (result != null)
             {
                 matchedCheckPlateId = result.Id;

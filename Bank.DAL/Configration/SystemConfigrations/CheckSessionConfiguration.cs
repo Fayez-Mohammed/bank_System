@@ -42,16 +42,19 @@ public class CheckSessionConfiguration : BaseEntityConfiguration<CheckSession>
         builder.HasIndex(x => new { x.UserId, x.StartedAt });
         builder.HasIndex(x => new { x.GroupId, x.StartedAt });
 
-        builder.HasIndex(x => new { x.GroupId, x.DisplayName })
-            .HasDatabaseName("UX_CheckSessions_DisplayName_PerGroup")
-            .IsUnique()
-            .HasFilter("group_id IS NOT NULL");
+        //builder.HasIndex(x => new { x.GroupId, x.DisplayName })
+        //    .HasDatabaseName("UX_CheckSessions_DisplayName_PerGroup")
+        //    .IsUnique()
+        //    .HasFilter("group_id IS NOT NULL");
 
+        //builder.HasIndex(x => new { x.UserId, x.DisplayName })
+        //    .HasDatabaseName("UX_CheckSessions_DisplayName_PerSoloUser")
+        //    .IsUnique()
+        //    .HasFilter("group_id IS NULL");
+        // اسم الجلسة فريد لكل يوزر (مش لكل جروب)
         builder.HasIndex(x => new { x.UserId, x.DisplayName })
-            .HasDatabaseName("UX_CheckSessions_DisplayName_PerSoloUser")
-            .IsUnique()
-            .HasFilter("group_id IS NULL");
-
+            .HasDatabaseName("UX_CheckSessions_DisplayName_PerUser")
+            .IsUnique();
         builder.HasOne(x => x.Group).WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.CheckFile).WithMany().HasForeignKey(x => x.CheckFileId).OnDelete(DeleteBehavior.SetNull);

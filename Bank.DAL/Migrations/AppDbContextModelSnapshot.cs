@@ -509,17 +509,11 @@ namespace Bank.DAL.Migrations
 
                     b.HasIndex("CheckFileId");
 
-                    b.HasIndex("GroupId", "DisplayName")
-                        .IsUnique()
-                        .HasDatabaseName("UX_CheckSessions_DisplayName_PerGroup")
-                        .HasFilter("group_id IS NOT NULL");
-
                     b.HasIndex("GroupId", "StartedAt");
 
                     b.HasIndex("UserId", "DisplayName")
                         .IsUnique()
-                        .HasDatabaseName("UX_CheckSessions_DisplayName_PerSoloUser")
-                        .HasFilter("group_id IS NULL");
+                        .HasDatabaseName("UX_CheckSessions_DisplayName_PerUser");
 
                     b.HasIndex("UserId", "StartedAt");
 
@@ -1515,17 +1509,11 @@ namespace Bank.DAL.Migrations
 
                     b.HasIndex("CheckFileId");
 
-                    b.HasIndex("GroupId", "DisplayName")
-                        .IsUnique()
-                        .HasDatabaseName("UX_RecordingSessions_DisplayName_PerGroup")
-                        .HasFilter("group_id IS NOT NULL");
-
                     b.HasIndex("GroupId", "StartedAt");
 
                     b.HasIndex("UserId", "DisplayName")
                         .IsUnique()
-                        .HasDatabaseName("UX_RecordingSessions_DisplayName_PerSoloUser")
-                        .HasFilter("group_id IS NULL");
+                        .HasDatabaseName("UX_RecordingSessions_DisplayName_PerUser");
 
                     b.HasIndex("UserId", "StartedAt");
 
