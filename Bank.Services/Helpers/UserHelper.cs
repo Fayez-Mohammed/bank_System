@@ -14,4 +14,3 @@ namespace Bank.Services.Helpers
         }
     }
 }
-

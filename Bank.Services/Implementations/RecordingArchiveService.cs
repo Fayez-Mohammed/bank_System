@@ -168,31 +168,35 @@ public class RecordingArchiveService : IRecordingArchiveService
             .ToListAsync(cancellationToken);
 
         // اسم الملف/الشيت بتاريخ التنزيل نفسه (مش تاريخ آخر صف)، زي ما اتفقنا.
-        var title =fileName?? $"نسخة تسجيل {DateTime.UtcNow:yyyy-MM-dd}";
+        var title =fileName?? $"نسخة تسجيل {DateTime.UtcNow.ToSaudiLocalTime():yyyy-MM-dd}";
 
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add(title);
         sheet.RightToLeft = true;
 
         sheet.Cell(1, 1).Value = "رقم اللوحة";
-        sheet.Cell(1, 2).Value = "GPS";
-        sheet.Cell(1, 3).Value = "تاريخ التسجيل";
-        sheet.Cell(1, 4).Value = "الحي";
+        sheet.Cell(1, 2).Value = "نوع السيارة";
+        sheet.Cell(1, 3).Value = "ملاحظات";
+
+        sheet.Cell(1, 4).Value = "GPS";
         sheet.Cell(1, 5).Value = "الشارع";
-        sheet.Cell(1, 6).Value = "ملاحظات";
-        sheet.Cell(1, 7).Value = "نوع السيارة";
+        sheet.Cell(1, 6).Value = "الحي";
+
+        sheet.Cell(1, 7).Value = "تاريخ التسجيل";
         sheet.Cell(1, 8).Value = "اسم المسجّل";
 
         var r = 2;
         foreach (var row in rows)
         {
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
-            sheet.Cell(r, 2).Value = row.Location;
-            sheet.Cell(r, 3).Value = row.RecordedAt.ToString("yyyy-MM-dd HH:mm");
-            sheet.Cell(r, 4).Value = row.District;
+            sheet.Cell(r, 2).Value = row.VehicleType;
+            sheet.Cell(r, 3).Value = row.Notes;
+
+            sheet.Cell(r, 4).Value = row.Location;
             sheet.Cell(r, 5).Value = row.Street;
-            sheet.Cell(r, 6).Value = row.Notes;
-            sheet.Cell(r, 7).Value = row.VehicleType;
+            sheet.Cell(r, 6).Value = row.District;
+
+            sheet.Cell(r, 7).Value = row.RecordedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
             sheet.Cell(r, 8).Value = row.RecorderName;
             r++;
         }
