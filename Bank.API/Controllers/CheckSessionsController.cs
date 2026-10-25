@@ -66,6 +66,33 @@ public class CheckSessionsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ex.Message));
         }
     }
+    public record ExportSessionsRequest(List<Guid> SessionIds);
+
+    [HttpPost("multi-export")]
+    [ProducesResponseType(typeof(FileResult), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
+    public async Task<IActionResult> Export([FromBody] ExportSessionsRequest request, CancellationToken cancellationToken)
+    {
+        if (request?.SessionIds is null || request.SessionIds.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail("يجب تحديد جلسة واحدة على الأقل للتصدير."));
+        }
+
+        try
+        {
+            var (bytes, fileName) = await _service.ExportAsync(request.SessionIds, CurrentUserId, cancellationToken);
+            return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+        }
+    }
     /// <summary>
     /// كل لوحات التشييك لكل الجلسات (مش جلسة معينة)، الأحدث الأول، مع paging.
     /// </summary>

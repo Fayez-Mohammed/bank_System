@@ -134,7 +134,7 @@ public class RecordingArchiveService : IRecordingArchiveService
             : await query.MaxAsync(a => a.CreatedAt, cancellationToken);
 
         var items = await query
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderBy(a => a.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(a => new RecordingArchiveRowDto(
@@ -160,7 +160,7 @@ public class RecordingArchiveService : IRecordingArchiveService
         var rows = await _dbContext.RecordingArchivePlates
             .AsNoTracking()
             .Where(a => a.UserId == currentUserId)
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderBy(a => a.CreatedAt)
             .Select(a => new
             {
                 a.NormalizedPlate, a.Location, a.RecordedAt, a.District, a.Street, a.Notes, a.VehicleType, a.RecorderName

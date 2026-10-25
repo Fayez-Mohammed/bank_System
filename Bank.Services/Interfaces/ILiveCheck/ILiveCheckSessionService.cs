@@ -40,7 +40,8 @@ public interface ILiveCheckSessionService
 
     Task<ApiResponse<PagedResult<LiveCheckLogRowDto>>> GetPlatesAsync(
         Guid sessionId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default);
-
+    Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    List<Guid> sessionIds, Guid userId, CancellationToken cancellationToken = default);
     Task<(byte[] FileBytes, string FileName)> ExportAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
 
     Task<ApiResponse<bool>> DeleteAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);

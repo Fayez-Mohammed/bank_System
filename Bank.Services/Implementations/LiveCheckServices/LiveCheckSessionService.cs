@@ -328,7 +328,81 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         };
         return ApiResponse<PagedResult<LiveCheckLogRowDto>>.SuccessResponse(result);
     }
+    public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    List<Guid> sessionIds, Guid userId, CancellationToken cancellationToken = default)
+    {
+        if (sessionIds is null || sessionIds.Count == 0)
+        {
+            throw new ArgumentException("قائمة الجلسات فارغة.", nameof(sessionIds));
+        }
 
+        // 💡 جلب اسم الـ ExcelSheetName لأحدث سيشن تم إنشاؤها من القائمة المحددة
+        var lastExcelSheetName = await _dbContext.CheckSessions
+            .AsNoTracking()
+            .Where(s => sessionIds.Contains(s.Id) && s.UserId == userId)
+            .OrderByDescending(s => s.StartedAt)
+            .Select(s => s.ExcelSheetName)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // جلب جميع اللوحات المترابطة بالجلسات المحددة
+        var rows = await _dbContext.LiveCheckLogs
+            .AsNoTracking()
+            .Where(l => sessionIds.Contains(l.CheckSessionId) && l.CheckSession.UserId == userId)
+            .OrderBy(l => l.CheckedAt)
+            .Select(l => new
+            {
+                l.NormalizedPlate,
+                l.Location,
+                l.CheckedAt,
+                l.District,
+                l.Street,
+                RecorderName = l.CheckSession.RecorderName,
+                l.VehicleType,
+                l.IsMatched
+            })
+            .ToListAsync(cancellationToken);
+
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("التشييك");
+        sheet.RightToLeft = true;
+
+        sheet.Cell(1, 1).Value = "رقم اللوحة";
+        sheet.Cell(1, 2).Value = "نوع السيارة";
+        sheet.Cell(1, 3).Value = "GPS";
+        sheet.Cell(1, 4).Value = "الشارع";
+        sheet.Cell(1, 5).Value = "الحي";
+        sheet.Cell(1, 6).Value = "تاريخ التسجيل";
+        sheet.Cell(1, 7).Value = "اسم المسجّل";
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            sheet.Cell(r, 1).Value = row.NormalizedPlate;
+            sheet.Cell(r, 2).Value = row.VehicleType;
+            sheet.Cell(r, 3).Value = row.Location;
+            sheet.Cell(r, 4).Value = row.Street;
+            sheet.Cell(r, 5).Value = row.District;
+            sheet.Cell(r, 6).Value = row.CheckedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+            sheet.Cell(r, 7).Value = row.RecorderName;
+            r++;
+        }
+
+        sheet.Columns().AdjustToContents();
+
+        // 💡 الفحص: لو أحدث سيشن فيها ExcelSheetName مش فاضي نستخدمه، غير كده نستخدم الـ Default
+        var fileName = !string.IsNullOrWhiteSpace(lastExcelSheetName)
+            ? lastExcelSheetName.Trim()
+            : $"التشييك-{DateTime.UtcNow.ToSaudiLocalTime():yyyy-MM-dd}";
+
+        if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            fileName += ".xlsx";
+        }
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return (stream.ToArray(), fileName);
+    }
     public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
         Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
     {

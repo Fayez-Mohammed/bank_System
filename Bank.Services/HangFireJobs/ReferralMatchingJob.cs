@@ -41,13 +41,22 @@ public class ReferralMatchingJob
             return;
         }
 
-        var connectionString = _configuration.GetConnectionString("DefaultConnection")
-?? throw new InvalidOperationException("Could not resolve the database connection string.");
+        //        var connectionString = _configuration.GetConnectionString("DefaultConnection")
+        //?? throw new InvalidOperationException("Could not resolve the database connection string.");
 
+
+        //        await using var connection = new NpgsqlConnection(connectionString);
+        //        await connection.OpenAsync(cancellationToken);
+        var baseConnectionString = _configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException("Could not resolve the database connection string.");
+
+        var connectionString = new NpgsqlConnectionStringBuilder(baseConnectionString)
+        {
+            CommandTimeout = 600
+        }.ConnectionString;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-
         try
         {
             if (job.FilterType == FilterType.New)
