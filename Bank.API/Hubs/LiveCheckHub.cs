@@ -66,11 +66,12 @@ public class LiveCheckHub : Hub
 
             _connections.Add(Context.ConnectionId, state);
 
-            // مش بننتظر الـ Task ده هنا — الـ Hub method لازم يرجع بسرعة، والاستماع
-            // للنتايج شغال في الخلفية طول عمر الجلسة.
+            
             state.ListenTask = ListenForDetectionsAsync(Context.ConnectionId, state);
 
-            await Clients.Caller.SendAsync("SessionStarted", new { sessionId = session.Id, displayName = session.DisplayName, recorderName = session.RecorderName });
+            await Clients.Caller.SendAsync("SessionStarted", new { sessionId = session.Id, displayName = session.DisplayName, recorderName = session.RecorderName ,District = session.District,
+                Street = session.Street
+            });
         }
         catch (Exception ex)
         {
