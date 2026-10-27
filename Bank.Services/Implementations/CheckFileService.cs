@@ -77,12 +77,18 @@ public class CheckFileService : ICheckFileService
         var sheet = workbook.Worksheets.Add("ملف التشييك");
         sheet.RightToLeft = true;
 
-        // نفس ترتيب أعمدة الرفع (لوحة، نوع، بنك، شاصي) عشان الملف المصدّر يترفع تاني زي ما هو
-        sheet.Cell(1, 1).Value = "رقم اللوحة";
+        // نفس ترتيب أعمدة الرفع (لوحة، نوع، بنك، شاصي)
+        sheet.Cell(1, 1).Value = "اللوحه";
         sheet.Cell(1, 2).Value = "النوع";
-        sheet.Cell(1, 3).Value = "اسم البنك";
-        sheet.Cell(1, 4).Value = "رقم الشاصي";
-        sheet.Row(1).Style.Font.Bold = true;
+        sheet.Cell(1, 3).Value = "البنك";
+        sheet.Cell(1, 4).Value = "الشاص";
+
+        // تنسيق الهيدر (الصف الأول)
+        var headerRow = sheet.Row(1);
+        headerRow.Style.Font.Bold = true;
+        headerRow.Style.Font.FontSize = 14;
+        headerRow.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        headerRow.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
 
         // نص صريح عشان الشاصي واللوحات الرقمية ما يتحولوش لأرقام
         sheet.Column(1).Style.NumberFormat.Format = "@";
@@ -97,6 +103,31 @@ public class CheckFileService : ICheckFileService
             sheet.Cell(r, 4).Value = row.ChassisNumber;
             r++;
         }
+
+        var totalRows = r - 1;
+
+        if (totalRows >= 2)
+        {
+            // 💡 تطبيق الألوان المحددة من الصورة على الخلايا المطلوبة (من الصف الثاني وحتى نهاية البيانات)
+            sheet.Range(2, 1, totalRows, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#00B050"); // الأخضر
+            sheet.Range(2, 2, totalRows, 2).Style.Fill.BackgroundColor = XLColor.FromHtml("#5B9BD5"); // الأزرق
+            sheet.Range(2, 3, totalRows, 3).Style.Fill.BackgroundColor = XLColor.FromHtml("#F4B084"); // البرتقالي
+            sheet.Range(2, 4, totalRows, 4).Style.Fill.BackgroundColor = XLColor.FromHtml("#FFC000"); // الأصفر/الذهبي
+
+            // تنسيق الخط والسنترة لكل خلايا البيانات
+            var dataRange = sheet.Range(2, 1, totalRows, 4);
+            dataRange.Style.Font.FontColor = XLColor.Black;
+            dataRange.Style.Font.FontSize = 13;
+            dataRange.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            dataRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+
+            // إضافة حدود خفيفة (Borders) مطابقة لمظهر الإكسيل في الصورة
+            dataRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            dataRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            dataRange.Style.Border.OutsideBorderColor = XLColor.Black;
+            dataRange.Style.Border.InsideBorderColor = XLColor.Black;
+        }
+
         sheet.Columns().AdjustToContents();
 
         using var stream = new MemoryStream();
@@ -105,6 +136,59 @@ public class CheckFileService : ICheckFileService
         var baseName = Path.GetFileNameWithoutExtension(checkFile.FileName);
         return (stream.ToArray(), $"{baseName}.xlsx");
     }
+    //public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    //Guid checkFileId, Guid currentUserId, CancellationToken cancellationToken = default)
+    //{
+    //    var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
+    //    if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
+
+    //    var checkFile = await _dbContext.CheckFiles
+    //        .AsNoTracking()
+    //        .Where(ScopeFilter(userScope.GroupId, currentUserId, checkFileId))
+    //        .Select(f => new { f.FileName })
+    //        .FirstOrDefaultAsync(cancellationToken);
+
+    //    if (checkFile is null) throw new KeyNotFoundException("الملف غير موجود.");
+
+    //    var rows = await _dbContext.CheckPlates
+    //        .AsNoTracking()
+    //        .Where(p => p.CheckFileId == checkFileId)
+    //        .OrderBy(p => p.Id)
+    //        .Select(p => new { p.RawPlate, p.VehicleType, p.BankName, p.ChassisNumber })
+    //        .ToListAsync(cancellationToken);
+
+    //    using var workbook = new XLWorkbook();
+    //    var sheet = workbook.Worksheets.Add("ملف التشييك");
+    //    sheet.RightToLeft = true;
+
+    //    // نفس ترتيب أعمدة الرفع (لوحة، نوع، بنك، شاصي) عشان الملف المصدّر يترفع تاني زي ما هو
+    //    sheet.Cell(1, 1).Value = "اللوحه";
+    //    sheet.Cell(1, 2).Value = "النوع";
+    //    sheet.Cell(1, 3).Value = "البنك";
+    //    sheet.Cell(1, 4).Value = "الشاص";
+    //    sheet.Row(1).Style.Font.Bold = true;
+
+    //    // نص صريح عشان الشاصي واللوحات الرقمية ما يتحولوش لأرقام
+    //    sheet.Column(1).Style.NumberFormat.Format = "@";
+    //    sheet.Column(4).Style.NumberFormat.Format = "@";
+
+    //    var r = 2;
+    //    foreach (var row in rows)
+    //    {
+    //        sheet.Cell(r, 1).Value = row.RawPlate;
+    //        sheet.Cell(r, 2).Value = row.VehicleType;
+    //        sheet.Cell(r, 3).Value = row.BankName;
+    //        sheet.Cell(r, 4).Value = row.ChassisNumber;
+    //        r++;
+    //    }
+    //    sheet.Columns().AdjustToContents();
+
+    //    using var stream = new MemoryStream();
+    //    workbook.SaveAs(stream);
+
+    //    var baseName = Path.GetFileNameWithoutExtension(checkFile.FileName);
+    //    return (stream.ToArray(), $"{baseName}.xlsx");
+    //}
     public async Task<ApiResponse<List<CheckFileSummaryDto>>> GetCheckFilesAsync(
         Guid currentUserId, CancellationToken cancellationToken = default)
     {
