@@ -33,6 +33,8 @@ public class LiveCheckLog : BaseEntityLong
 
     // لو الصف ده اتحوّل لملف داتا قبل كده، عشان المرة الجاية نلحق الجديد بس
     // (زي RecordingArchivePlate بالظبط — التحويل تراكمي ومش بيمسح التشييك).
+    public string? BankName { get; set; }                          // اسم البنك
+    public string? VehicleTypeInCheckFile { get; set; }     // نوع السيارة في ملف التحقق
     public Guid? AppendedToDataFileId { get; set; }
     public DateTime? AppendedAt { get; set; }
 }

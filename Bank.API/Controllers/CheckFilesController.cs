@@ -24,6 +24,17 @@ public class CheckFilesController : ControllerBase
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+    [HttpPost("replace-bank-plates")]
+    [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
+    [RequestSizeLimit(50_000_000)]
+    [ProducesResponseType(typeof(ApiResponse<ReplaceBankPlatesResultDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ReplaceBankPlates([FromForm] ReplaceBankPlatesRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _checkFileService.ReplaceBankPlatesAsync(CurrentUserId, request, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
     /// <summary>
     /// Get all check files for the current user
     /// </summary>

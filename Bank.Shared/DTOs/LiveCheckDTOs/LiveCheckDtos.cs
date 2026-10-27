@@ -4,7 +4,8 @@ namespace Bank.Shared.DTOs.LiveCheckDTOs;
 
 public record LiveCheckPlateResultDto(
     long Id, string NormalizedPlate, string? VehicleType, bool IsMatched,
-    string? LocationLink, DateTime CheckedAt);
+    string? LocationLink, DateTime CheckedAt, string? BankName,
+    string? VehicleTypeInCheckFile);
 
 public class CreateManualLiveCheckRequestDto
 {

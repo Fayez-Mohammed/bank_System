@@ -1072,7 +1072,7 @@ public class ReferralJobService : IReferralJobService
                     if (key == nameof(HistoricalDataColumn.Location) && !string.IsNullOrWhiteSpace(value)
                         && Uri.TryCreate(value, UriKind.Absolute, out var uri))
                     {
-                        cell.Value = "فتح الموقع";
+                        cell.Value = value;
                         cell.SetHyperlink(new XLHyperlink(uri.AbsoluteUri));
                         cell.Style.Font.FontColor = XLColor.FromHtml("#0563C1");
                         cell.Style.Font.Underline = XLFontUnderlineValues.Single;

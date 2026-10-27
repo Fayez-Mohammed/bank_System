@@ -753,6 +753,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("appended_to_data_file_id");
 
+                    b.Property<string>("BankName")
+                        .HasColumnType("text")
+                        .HasColumnName("bank_name");
+
                     b.Property<Guid>("CheckSessionId")
                         .HasColumnType("uuid")
                         .HasColumnName("check_session_id");
@@ -820,6 +824,10 @@ namespace Bank.DAL.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("vehicle_type");
+
+                    b.Property<string>("VehicleTypeInCheckFile")
+                        .HasColumnType("text")
+                        .HasColumnName("vehicle_type_in_check_file");
 
                     b.HasKey("Id");
 

@@ -14,3 +14,12 @@ public class CreateCheckFileRequestDto
 {
     public IFormFile File { get; set; } = null!;
 }
+public class ReplaceBankPlatesRequestDto
+{
+    public IFormFile File { get; set; } = null!;
+    public string BankName { get; set; } = null!;
+}
+
+public record ReplaceBankPlatesResultDto(
+    string BankName, int DeletedCount, int InsertedCount, int SkippedDuplicateCount,
+    string? PlateColumn, string? VehicleTypeColumn, string? ChassisColumn);

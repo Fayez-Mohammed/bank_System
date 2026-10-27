@@ -36,7 +36,8 @@ public class LiveCheckLogConfiguration : BaseEntityLongConfiguration<LiveCheckLo
         builder.Property(x => x.CheckedAt).HasColumnName("checked_at").HasDefaultValueSql("now()").IsRequired();
         builder.Property(x => x.AppendedToDataFileId).HasColumnName("appended_to_data_file_id");
         builder.Property(x => x.AppendedAt).HasColumnName("appended_at");
-
+        builder.Property(x => x.BankName).HasColumnName("bank_name");
+        builder.Property(x => x.VehicleTypeInCheckFile).HasColumnName("vehicle_type_in_check_file");
         builder.HasIndex(x => x.NormalizedPlate);
         builder.HasIndex(x => new { x.CheckSessionId, x.CheckedAt });
         builder.HasIndex(x => new { x.UserId, x.CheckedAt });

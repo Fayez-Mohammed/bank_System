@@ -81,20 +81,85 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         return (session, activeCheckFileId);
     }
 
+    //public async Task<LiveCheckPlateResultDto> ProcessDetectionAsync(
+    //    Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string? district, string? street,
+    //    double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
+    //    CancellationToken cancellationToken = default)
+    //{
+    //    var normalized = PlateNormalizer.Normalize(detection.PlateNumber);
+
+    //    long? matchedCheckPlateId = null;
+
+    //    if (checkFileId.HasValue)
+    //    {
+    //        matchedCheckPlateId = await _dbContext.CheckPlates
+    //            .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == normalized)
+    //            .Select(cp => (long?)cp.Id)
+    //            .FirstOrDefaultAsync(cancellationToken);
+
+    //    }
+
+    //    var locationLink = (latitude.HasValue && longitude.HasValue)
+    //        ? LocationLinkHelper.ToGoogleMapsLink(latitude.Value, longitude.Value)
+    //        : null;
+
+    //    var log = new LiveCheckLog
+    //    {
+    //        CheckSessionId = sessionId,
+    //        UserId = userId,
+    //        GroupId = groupId,
+    //        RawPlate = detection.PlateNumber,
+    //        NormalizedPlate = normalized,
+    //        CheckType = checkType,
+    //        VehicleType = detection.VehicleType,
+    //        District = district,
+    //        Street = street,
+    //        Location = locationLink,
+    //        IsMatched = matchedCheckPlateId.HasValue,
+    //        MatchedCheckPlateId = matchedCheckPlateId,
+    //        CheckedAt = DateTime.UtcNow
+    //    };
+
+    //    await _dbContext.LiveCheckLogs.AddAsync(log, cancellationToken);
+
+    //    await _dbContext.CheckSessions
+    //        .Where(s => s.Id == sessionId)
+    //        .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.TotalPlates, s => s.TotalPlates + 1), cancellationToken);
+
+    //    await _dbContext.SaveChangesAsync(cancellationToken);
+
+    //    return new LiveCheckPlateResultDto(log.Id, log.NormalizedPlate, log.VehicleType, log.IsMatched, log.Location, log.CheckedAt);
+    //}
+
     public async Task<LiveCheckPlateResultDto> ProcessDetectionAsync(
-        Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string? district, string? street,
-        double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
-        CancellationToken cancellationToken = default)
+    Guid sessionId, Guid userId, Guid? groupId, Guid? checkFileId, string? district, string? street,
+    double? latitude, double? longitude, AiPlateDetectedEvent detection, CheckType checkType,
+    CancellationToken cancellationToken = default)
     {
         var normalized = PlateNormalizer.Normalize(detection.PlateNumber);
 
         long? matchedCheckPlateId = null;
+        string? bankName = null;
+        string? vehicleTypeInCheckFile = null;
+
         if (checkFileId.HasValue)
         {
-            matchedCheckPlateId = await _dbContext.CheckPlates
+            var result = await _dbContext.CheckPlates
                 .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == normalized)
-                .Select(cp => (long?)cp.Id)
+                .Select(cp => new
+                {
+                    Id = (long?)cp.Id,
+                    BankName = cp.BankName,
+                    VehicleType = cp.VehicleType
+                })
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (result != null)
+            {
+                matchedCheckPlateId = result.Id;
+                bankName = result.BankName;
+                vehicleTypeInCheckFile = result.VehicleType;
+            }
         }
 
         var locationLink = (latitude.HasValue && longitude.HasValue)
@@ -115,6 +180,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             Location = locationLink,
             IsMatched = matchedCheckPlateId.HasValue,
             MatchedCheckPlateId = matchedCheckPlateId,
+            BankName = bankName,                             // 💡 إضافة اسم البنك
+            VehicleTypeInCheckFile = vehicleTypeInCheckFile, // 💡 إضافة نوع السيارة في ملف التشييك
             CheckedAt = DateTime.UtcNow
         };
 
@@ -126,15 +193,23 @@ public class LiveCheckSessionService : ILiveCheckSessionService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        return new LiveCheckPlateResultDto(log.Id, log.NormalizedPlate, log.VehicleType, log.IsMatched, log.Location, log.CheckedAt);
+        return new LiveCheckPlateResultDto(
+            log.Id,
+            log.NormalizedPlate,
+            log.VehicleType,
+            log.IsMatched,
+            log.Location,
+            log.CheckedAt,
+            bankName,                // 💡 إرجاع اسم البنك
+            vehicleTypeInCheckFile   // 💡 إرجاع نوع السيارة في ملف التشييك
+        );
     }
-
     // الـ AI أحيانًا بيبعت "تصحيح" لآخر لوحة اتسمعت (من غير ما يحدد رقمها القديم —
     // زي لما يسمع صدى/تكرار ويحتاج يظبط آخر قراءة). بناخد آخر LiveCheckLog في نفس
     // الـ Session (بالـ Id، أضمن من CheckedAt لو فيه تساوي بالميلي ثانية) ونعدّله
     // في مكانه، ونعيد الـ Matching لأن رقم اللوحة اتغيّر.
     public async Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
-        Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default)
+    Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default)
     {
         var lastLog = await _dbContext.LiveCheckLogs
             .Where(l => l.CheckSessionId == sessionId)
@@ -152,12 +227,27 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         var normalized = PlateNormalizer.Normalize(newPlateNumber);
 
         long? matchedCheckPlateId = null;
+        string? bankName = null;
+        string? vehicleTypeInCheckFile = null;
+
         if (checkFileId.HasValue)
         {
-            matchedCheckPlateId = await _dbContext.CheckPlates
+            var result = await _dbContext.CheckPlates
                 .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == normalized)
-                .Select(cp => (long?)cp.Id)
+                .Select(cp => new
+                {
+                    Id = (long?)cp.Id,
+                    BankName = cp.BankName,
+                    VehicleType = cp.VehicleType
+                })
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (result != null)
+            {
+                matchedCheckPlateId = result.Id;
+                bankName = result.BankName;
+                vehicleTypeInCheckFile = result.VehicleType;
+            }
         }
 
         lastLog.RawPlate = newPlateNumber;
@@ -165,6 +255,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         if (!string.IsNullOrWhiteSpace(vehicleType)) lastLog.VehicleType = vehicleType;
         lastLog.IsMatched = matchedCheckPlateId.HasValue;
         lastLog.MatchedCheckPlateId = matchedCheckPlateId;
+        lastLog.BankName = bankName;                             // 💡 تحديث اسم البنك الخاص باللوحة المصححة
+        lastLog.VehicleTypeInCheckFile = vehicleTypeInCheckFile; // 💡 تحديث نوع السيارة الخاص باللوحة المصححة
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -172,16 +264,66 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             "Plate correction applied: CheckSession {SessionId}, LiveCheckLog {LogId} corrected to {Plate}",
             sessionId, lastLog.Id, normalized);
 
-        return new LiveCheckPlateResultDto(lastLog.Id, lastLog.NormalizedPlate, lastLog.VehicleType, lastLog.IsMatched, lastLog.Location, lastLog.CheckedAt);
+        return new LiveCheckPlateResultDto(
+            lastLog.Id,
+            lastLog.NormalizedPlate,
+            lastLog.VehicleType,
+            lastLog.IsMatched,
+            lastLog.Location,
+            lastLog.CheckedAt,
+            bankName,               // 💡 إرجاع اسم البنك الجديد
+            vehicleTypeInCheckFile  // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+        );
     }
+    //public async Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
+    //    Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default)
+    //{
+    //    var lastLog = await _dbContext.LiveCheckLogs
+    //        .Where(l => l.CheckSessionId == sessionId)
+    //        .OrderByDescending(l => l.Id)
+    //        .FirstOrDefaultAsync(cancellationToken);
+
+    //    if (lastLog is null)
+    //    {
+    //        _logger.LogWarning(
+    //            "Plate correction received for CheckSession {SessionId} but no prior detection exists in this session — ignoring",
+    //            sessionId);
+    //        return null;
+    //    }
+
+    //    var normalized = PlateNormalizer.Normalize(newPlateNumber);
+
+    //    long? matchedCheckPlateId = null;
+    //    if (checkFileId.HasValue)
+    //    {
+    //        matchedCheckPlateId = await _dbContext.CheckPlates
+    //            .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == normalized)
+    //            .Select(cp => (long?)cp.Id)
+    //            .FirstOrDefaultAsync(cancellationToken);
+    //    }
+
+    //    lastLog.RawPlate = newPlateNumber;
+    //    lastLog.NormalizedPlate = normalized;
+    //    if (!string.IsNullOrWhiteSpace(vehicleType)) lastLog.VehicleType = vehicleType;
+    //    lastLog.IsMatched = matchedCheckPlateId.HasValue;
+    //    lastLog.MatchedCheckPlateId = matchedCheckPlateId;
+
+    //    await _dbContext.SaveChangesAsync(cancellationToken);
+
+    //    _logger.LogInformation(
+    //        "Plate correction applied: CheckSession {SessionId}, LiveCheckLog {LogId} corrected to {Plate}",
+    //        sessionId, lastLog.Id, normalized);
+
+    //    return new LiveCheckPlateResultDto(lastLog.Id, lastLog.NormalizedPlate, lastLog.VehicleType, lastLog.IsMatched, lastLog.Location, lastLog.CheckedAt);
+    //}
 
     // الـ "استبدال" بيحدد رقم اللوحة القديم صراحة، فبندوّر على سجل بنفس اللوحة
     // دي **جوه نفس الـ Session بس** (مش أي جلسة تانية لنفس اليوزر) — ده تحقق
     // الأمان المطلوب: مينفعش الـ AI يعدّل سجل جلسة تانية خالص. لو ملقيناش سجل
     // مطابق، بنرفض الطلب ونسجّل تحذير بدل ما نضيف سجل جديد باسم غلط.
     public async Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
-        Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
-        CancellationToken cancellationToken = default)
+    Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
+    CancellationToken cancellationToken = default)
     {
         var oldNormalized = PlateNormalizer.Normalize(oldPlateNumber);
 
@@ -189,7 +331,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Where(l => l.CheckSessionId == sessionId && l.NormalizedPlate == oldNormalized)
             .OrderByDescending(l => l.Id)
             .FirstOrDefaultAsync(cancellationToken);
-        
+
         if (targetLog is null)
         {
             _logger.LogWarning(
@@ -201,12 +343,27 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         var newNormalized = PlateNormalizer.Normalize(newPlateNumber);
 
         long? matchedCheckPlateId = null;
+        string? bankName = null;
+        string? vehicleTypeInCheckFile = null;
+
         if (checkFileId.HasValue)
         {
-            matchedCheckPlateId = await _dbContext.CheckPlates
+            var result = await _dbContext.CheckPlates
                 .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == newNormalized)
-                .Select(cp => (long?)cp.Id)
+                .Select(cp => new
+                {
+                    Id = (long?)cp.Id,
+                    BankName = cp.BankName,
+                    VehicleType = cp.VehicleType
+                })
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (result != null)
+            {
+                matchedCheckPlateId = result.Id;
+                bankName = result.BankName;
+                vehicleTypeInCheckFile = result.VehicleType;
+            }
         }
 
         targetLog.RawPlate = newPlateNumber;
@@ -214,6 +371,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         if (!string.IsNullOrWhiteSpace(vehicleType)) targetLog.VehicleType = vehicleType;
         targetLog.IsMatched = matchedCheckPlateId.HasValue;
         targetLog.MatchedCheckPlateId = matchedCheckPlateId;
+        targetLog.BankName = bankName;                             // 💡 تحديث اسم البنك للوحة الاستبدال
+        targetLog.VehicleTypeInCheckFile = vehicleTypeInCheckFile; // 💡 تحديث نوع السيارة في ملف التشييك للوحة الاستبدال
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -221,8 +380,61 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             "Plate replacement applied: CheckSession {SessionId}, LiveCheckLog {LogId} replaced {OldPlate} -> {NewPlate}",
             sessionId, targetLog.Id, oldNormalized, newNormalized);
 
-        return new LiveCheckPlateResultDto(targetLog.Id, targetLog.NormalizedPlate, targetLog.VehicleType, targetLog.IsMatched, targetLog.Location, targetLog.CheckedAt);
+        return new LiveCheckPlateResultDto(
+            targetLog.Id,
+            targetLog.NormalizedPlate,
+            targetLog.VehicleType,
+            targetLog.IsMatched,
+            targetLog.Location,
+            targetLog.CheckedAt,
+            bankName,               // 💡 إرجاع اسم البنك الجديد
+            vehicleTypeInCheckFile  // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+        );
     }
+    //public async Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
+    //    Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
+    //    CancellationToken cancellationToken = default)
+    //{
+    //    var oldNormalized = PlateNormalizer.Normalize(oldPlateNumber);
+
+    //    var targetLog = await _dbContext.LiveCheckLogs
+    //        .Where(l => l.CheckSessionId == sessionId && l.NormalizedPlate == oldNormalized)
+    //        .OrderByDescending(l => l.Id)
+    //        .FirstOrDefaultAsync(cancellationToken);
+
+    //    if (targetLog is null)
+    //    {
+    //        _logger.LogWarning(
+    //            "Plate replacement received for CheckSession {SessionId}: old plate {OldPlate} not found in this session — ignoring",
+    //            sessionId, oldNormalized);
+    //        return null;
+    //    }
+
+    //    var newNormalized = PlateNormalizer.Normalize(newPlateNumber);
+
+    //    long? matchedCheckPlateId = null;
+    //    if (checkFileId.HasValue)
+    //    {
+    //        matchedCheckPlateId = await _dbContext.CheckPlates
+    //            .Where(cp => cp.CheckFileId == checkFileId.Value && cp.NormalizedPlate == newNormalized)
+    //            .Select(cp => (long?)cp.Id)
+    //            .FirstOrDefaultAsync(cancellationToken);
+    //    }
+
+    //    targetLog.RawPlate = newPlateNumber;
+    //    targetLog.NormalizedPlate = newNormalized;
+    //    if (!string.IsNullOrWhiteSpace(vehicleType)) targetLog.VehicleType = vehicleType;
+    //    targetLog.IsMatched = matchedCheckPlateId.HasValue;
+    //    targetLog.MatchedCheckPlateId = matchedCheckPlateId;
+
+    //    await _dbContext.SaveChangesAsync(cancellationToken);
+
+    //    _logger.LogInformation(
+    //        "Plate replacement applied: CheckSession {SessionId}, LiveCheckLog {LogId} replaced {OldPlate} -> {NewPlate}",
+    //        sessionId, targetLog.Id, oldNormalized, newNormalized);
+
+    //    return new LiveCheckPlateResultDto(targetLog.Id, targetLog.NormalizedPlate, targetLog.VehicleType, targetLog.IsMatched, targetLog.Location, targetLog.CheckedAt);
+    //}
 
     public async Task CompleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
@@ -379,7 +591,20 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         {
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
             sheet.Cell(r, 2).Value = row.VehicleType;
-            sheet.Cell(r, 3).Value = row.Location;
+            //sheet.Cell(r, 3).Value = row.Location;
+            var locCell = sheet.Cell(r, 3);
+            if (!string.IsNullOrWhiteSpace(row.Location)
+                && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+            {
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
+                locCell.Style.Font.FontColor = XLColor.Blue;
+                locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            else
+            {
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
+            }
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
             sheet.Cell(r, 6).Value = row.CheckedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -447,7 +672,20 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             //   sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
             sheet.Cell(r, 2).Value = row.VehicleType;
 
-            sheet.Cell(r, 3).Value = row.Location;
+            // sheet.Cell(r, 3).Value = row.Location;
+            var locCell = sheet.Cell(r, 3);
+            if (!string.IsNullOrWhiteSpace(row.Location)
+                && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+            {
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
+                locCell.Style.Font.FontColor = XLColor.Blue;
+                locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            else
+            {
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
+            }
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
 
@@ -574,7 +812,20 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             // sheet.Cell(r, 2).Value = row.IsMatched ? "مطابقة" : "غير مطابقة";
             sheet.Cell(r, 2).Value = row.VehicleType;
 
-            sheet.Cell(r, 3).Value = row.Location;
+            //  sheet.Cell(r, 3).Value = row.Location;
+            var locCell = sheet.Cell(r, 3);
+            if (!string.IsNullOrWhiteSpace(row.Location)
+                && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+            {
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
+                locCell.Style.Font.FontColor = XLColor.Blue;
+                locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            else
+            {
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
+            }
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
 
@@ -749,7 +1000,20 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             sheet.Cell(r, 3).Value = row.VehicleType;
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
-            sheet.Cell(r, 6).Value = row.Location;
+            // sheet.Cell(r, 6).Value = row.Location;
+            var locCell = sheet.Cell(r, 6);
+            if (!string.IsNullOrWhiteSpace(row.Location)
+                && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+            {
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
+                locCell.Style.Font.FontColor = XLColor.Blue;
+                locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            else
+            {
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
+            }
             sheet.Cell(r, 7).Value = row.CheckedAt.ToString("yyyy-MM-dd HH:mm:ss");
             sheet.Cell(r, 8).Value = row.CheckSession.RecorderName;
             r++;

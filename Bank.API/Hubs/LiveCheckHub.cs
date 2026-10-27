@@ -46,13 +46,13 @@ public class LiveCheckHub : Hub
     public async Task StartSession(string? recorderName, string? district, string? street, string? excelSheetName)
     {
         var userId = GetUserId();
-
+        Guid? createdSessionId = null;
         try
         {
 
             var (session, checkFileId) = await _sessionService.CreateSessionAsync(userId, recorderName, district, street, excelSheetName);
             var aiSession = await _aiConnector.StartSessionAsync(Context.ConnectionAborted);
-
+            createdSessionId = session.Id;
             var state = new LiveCheckConnectionState
             {
                 SessionId = session.Id,
@@ -77,6 +77,22 @@ public class LiveCheckHub : Hub
         {
          
             _logger.LogError(ex, "Failed to start live check session for user {UserId}", userId);
+            if (createdSessionId.HasValue)
+            {
+                try
+                {
+                    await _sessionService.MarkSessionFailedAsync(
+                        createdSessionId.Value,
+                        "تعذّر الاتصال بخدمة الـ AI أثناء بدء الجلسة.",
+                        CancellationToken.None);
+
+                    // await _sessionService.DeleteSessionAsync(createdSessionId.Value, CancellationToken.None);
+                }
+                catch (Exception rollbackEx)
+                {
+                    _logger.LogError(rollbackEx, "Failed to rollback/clean up CheckSession {SessionId}", createdSessionId.Value);
+                }
+            }
             await Clients.Caller.SendAsync("Error", new { message = "تعذّر بدء جلسة التشييك." });
         }
     }

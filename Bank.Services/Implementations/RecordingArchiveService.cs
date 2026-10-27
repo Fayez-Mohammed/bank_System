@@ -192,7 +192,20 @@ public class RecordingArchiveService : IRecordingArchiveService
             sheet.Cell(r, 2).Value = row.VehicleType;
             sheet.Cell(r, 3).Value = row.Notes;
 
-            sheet.Cell(r, 4).Value = row.Location;
+            // sheet.Cell(r, 4).Value = row.Location;
+            var locCell = sheet.Cell(r, 4);
+            if (!string.IsNullOrWhiteSpace(row.Location)
+                && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+            {
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
+                locCell.Style.Font.FontColor = XLColor.Blue;
+                locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            else
+            {
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
+            }
             sheet.Cell(r, 5).Value = row.Street;
             sheet.Cell(r, 6).Value = row.District;
 
