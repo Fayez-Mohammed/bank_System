@@ -119,7 +119,7 @@ namespace Bank
             RecurringJob.AddOrUpdate<CertificateSyncJob>(
                 "certificate-sync",
                 job => job.SyncAsync(CancellationToken.None),
-                app.Configuration["Certificates:SyncCron"] ?? "*/10 * * * *");
+                app.Configuration["Certificates:SyncCron"] ?? "0 * * * *");
             app.MapHub<LiveCheckHub>("/hubs/live-check");
             app.MapHub<MemberLocationHub>("/hubs/member-location");
 

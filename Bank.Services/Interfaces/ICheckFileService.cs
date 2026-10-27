@@ -18,4 +18,6 @@ public interface ICheckFileService
         Guid checkFileId, Guid currentUserId, CancellationToken cancellationToken = default);
     Task<ApiResponse<ReplaceBankPlatesResultDto>> ReplaceBankPlatesAsync(
     Guid currentUserId, ReplaceBankPlatesRequestDto request, CancellationToken cancellationToken = default);
+    Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    Guid checkFileId, Guid currentUserId, CancellationToken cancellationToken = default);
 }

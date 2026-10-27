@@ -24,6 +24,30 @@ public class CheckFilesController : ControllerBase
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+    /// <summary>
+    /// Export a check file's plates to Excel (same column layout used for upload)
+    /// </summary>
+    [HttpGet("{checkFileId:guid}/export")]
+    [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
+
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Export(Guid checkFileId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (bytes, fileName) = await _checkFileService.ExportAsync(checkFileId, CurrentUserId, cancellationToken);
+            return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+    }
     [HttpPost("replace-bank-plates")]
     [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
     [RequestSizeLimit(50_000_000)]

@@ -1,22 +1,23 @@
-using Bank.Services.Helpers;
-using System.Data;
-using System.Globalization;
 using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
 using Bank.Repo.Interfaces;
 using Bank.Services.HangFireJobs;
+using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.CheckFileDTos;
 using Bank.Shared.Enums;
+using ClosedXML.Excel;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExcelDataReader;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
+using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 namespace Bank.Services.Implementations;
@@ -51,7 +52,59 @@ public class CheckFileService : ICheckFileService
         _configuration = configuration;
         _permissions = permissions;
     }
+    public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    Guid checkFileId, Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
+        if (userScope is null) throw new UnauthorizedAccessException("المستخدم غير موجود.");
 
+        var checkFile = await _dbContext.CheckFiles
+            .AsNoTracking()
+            .Where(ScopeFilter(userScope.GroupId, currentUserId, checkFileId))
+            .Select(f => new { f.FileName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (checkFile is null) throw new KeyNotFoundException("الملف غير موجود.");
+
+        var rows = await _dbContext.CheckPlates
+            .AsNoTracking()
+            .Where(p => p.CheckFileId == checkFileId)
+            .OrderBy(p => p.Id)
+            .Select(p => new { p.RawPlate, p.VehicleType, p.BankName, p.ChassisNumber })
+            .ToListAsync(cancellationToken);
+
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("ملف التشييك");
+        sheet.RightToLeft = true;
+
+        // نفس ترتيب أعمدة الرفع (لوحة، نوع، بنك، شاصي) عشان الملف المصدّر يترفع تاني زي ما هو
+        sheet.Cell(1, 1).Value = "رقم اللوحة";
+        sheet.Cell(1, 2).Value = "النوع";
+        sheet.Cell(1, 3).Value = "اسم البنك";
+        sheet.Cell(1, 4).Value = "رقم الشاصي";
+        sheet.Row(1).Style.Font.Bold = true;
+
+        // نص صريح عشان الشاصي واللوحات الرقمية ما يتحولوش لأرقام
+        sheet.Column(1).Style.NumberFormat.Format = "@";
+        sheet.Column(4).Style.NumberFormat.Format = "@";
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            sheet.Cell(r, 1).Value = row.RawPlate;
+            sheet.Cell(r, 2).Value = row.VehicleType;
+            sheet.Cell(r, 3).Value = row.BankName;
+            sheet.Cell(r, 4).Value = row.ChassisNumber;
+            r++;
+        }
+        sheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var baseName = Path.GetFileNameWithoutExtension(checkFile.FileName);
+        return (stream.ToArray(), $"{baseName}.xlsx");
+    }
     public async Task<ApiResponse<List<CheckFileSummaryDto>>> GetCheckFilesAsync(
         Guid currentUserId, CancellationToken cancellationToken = default)
     {
