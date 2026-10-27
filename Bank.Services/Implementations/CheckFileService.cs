@@ -128,7 +128,10 @@ public class CheckFileService : ICheckFileService
             dataRange.Style.Border.InsideBorderColor = XLColor.Black;
         }
 
-        sheet.Columns().AdjustToContents();
+        sheet.Column(1).Width = 20; 
+        sheet.Column(2).Width = 22; 
+        sheet.Column(3).Width = 22; 
+        sheet.Column(4).Width = 32; 
 
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
