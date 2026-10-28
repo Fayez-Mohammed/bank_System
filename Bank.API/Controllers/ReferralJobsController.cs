@@ -87,9 +87,9 @@ public class ReferralJobsController : ControllerBase
     [HttpPost("upload/inspect")]
     [Authorize(Policy = PermissionPolicies.Sort)]
     [RequestSizeLimit(50_000_000)]
-    public async Task<IActionResult> InspectUpload(IFormFile file, CancellationToken cancellationToken)
+    public async Task<IActionResult> InspectUpload(IFormFile file,  CancellationToken cancellationToken,string? password = null)
     {
-        var result = await _referralJobService.InspectUploadAsync(file, cancellationToken);
+        var result = await _referralJobService.InspectUploadAsync(file, password, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
 

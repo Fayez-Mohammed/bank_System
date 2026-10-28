@@ -21,7 +21,7 @@ namespace Bank.Services.Helpers
 
         /// <summary>بيرجّع أسامي الـ Sheets وعدد صفوفها، ويكتشف صف الهيدر الحقيقي (مش بالضرورة أول صف)
         /// مع عينة صغيرة من صفوف الداتا اللي بعده (لاقتراح عمود اللوحة/الأعمدة الافتراضية).</summary>
-        public static List<ExcelSheetInfo> GetSheetsInfo(Stream stream, string extension)
+        public static List<ExcelSheetInfo> GetSheetsInfo(Stream stream, string extension, string? password)
         {
             if (extension == ".csv")
             {
@@ -30,6 +30,7 @@ namespace Bank.Services.Helpers
                     HasHeaderRecord = false,
                     MissingFieldFound = null,
                     BadDataFound = null
+                    
                 };
                 using var textReader = new StreamReader(stream);
                 using var csv = new CsvReader(textReader, config);
@@ -55,7 +56,12 @@ namespace Bank.Services.Helpers
             }
 
             var result = new List<ExcelSheetInfo>();
-            using var reader = ExcelReaderFactory.CreateReader(stream);
+            var readerConfig = new ExcelReaderConfiguration
+            {
+                Password = password
+            };
+
+            using var reader = ExcelReaderFactory.CreateReader(stream, readerConfig);
             var sheetIndex = 0;
 
             do

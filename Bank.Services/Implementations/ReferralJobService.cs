@@ -256,7 +256,7 @@ public class ReferralJobService : IReferralJobService
             groups);
     }
     public async Task<ApiResponse<InspectReferralFileResponseDto>> InspectUploadAsync(
-        IFormFile file, CancellationToken cancellationToken = default)
+        IFormFile file, string? password = null, CancellationToken cancellationToken = default)
     {
         var validationError = ValidateUploadedFile(file);
         if (validationError is not null) return ApiResponse<InspectReferralFileResponseDto>.Fail(validationError, null, 400);
@@ -266,7 +266,7 @@ public class ReferralJobService : IReferralJobService
         List<ExcelSheetInfo> sheets;
         await using (var stream = file.OpenReadStream())
         {
-            sheets = ExcelSheetReader.GetSheetsInfo(stream, extension);
+            sheets = ExcelSheetReader.GetSheetsInfo(stream, extension, password);
         }
 
         var sheetDtos = sheets.Select(s =>
