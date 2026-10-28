@@ -225,6 +225,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("discovered_at")
                         .HasDefaultValueSql("now()");
 
+                    b.Property<DateTime>("DriveCreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("drive_created_at");
+
                     b.Property<string>("DriveFileId")
                         .IsRequired()
                         .HasMaxLength(100)

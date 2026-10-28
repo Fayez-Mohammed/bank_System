@@ -96,7 +96,8 @@ public class CertificateSyncJob
                 DriveFileId = f.FileId,
                 FileName = TextUtil.Truncate(f.Name, 500)!,
                 BatchNo = batchNo,
-                Status = CertificateStatus.Pending
+                Status = CertificateStatus.Pending,
+                DriveCreatedAt = f.CreatedAt ?? DateTime.UtcNow
             }).ToList();
 
             _db.Certificates.AddRange(rows);

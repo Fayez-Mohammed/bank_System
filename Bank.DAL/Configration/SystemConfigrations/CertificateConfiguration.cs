@@ -24,7 +24,9 @@ public class CertificateConfiguration : BaseEntityConfiguration<Certificate>
             .HasMaxLength(20)
             .HasDefaultValue(CertificateProvider.Sijil)
             .IsRequired();
-
+        builder.Property(x => x.DriveCreatedAt)
+    .HasColumnName("drive_created_at")
+    .IsRequired();
         builder.Property(x => x.PlateLetters).HasColumnName("plate_letters").HasMaxLength(10);
         builder.Property(x => x.PlateDigits).HasColumnName("plate_digits").HasMaxLength(10);
         builder.Property(x => x.NormalizedPlate).HasColumnName("normalized_plate").HasMaxLength(30);

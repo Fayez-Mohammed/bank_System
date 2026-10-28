@@ -29,7 +29,8 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         string Status,
         bool NeedsReview,
         int BatchNo,
-        DateTime AddedAt);
+        DateTime AddedAt,
+        DateTime DriveCreatedAt);
 
     public record CertificateDetailDto(
         Guid Id,
@@ -48,7 +49,8 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         bool IsManuallyEdited,
         bool HasLocalCopy,
         int BatchNo,
-        DateTime AddedAt);
+        DateTime AddedAt,
+        DateTime DriveCreatedAt);
 
     // ============================ الدفعات ============================
 

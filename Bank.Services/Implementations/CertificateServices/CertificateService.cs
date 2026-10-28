@@ -112,14 +112,14 @@ public class CertificateService : ICertificateService
             .Select(c => new
             {
                 c.Id, c.FileName, c.PlateLetters, c.PlateDigits, c.NormalizedPlate,
-                c.Make, c.Model, c.Color, c.Lessor, c.Status, c.BatchNo, c.DiscoveredAt
+                c.Make, c.Model, c.Color, c.Lessor, c.Status, c.BatchNo, c.DiscoveredAt,c.DriveCreatedAt
             })
             .ToListAsync(ct);
 
         var items = rows.Select(c => new CertificateListItemDto(
             c.Id, c.FileName, PlateText.Display(c.PlateLetters, c.PlateDigits), c.NormalizedPlate,
             c.Make, c.Model, c.Color, c.Lessor, c.Status.ToString(),
-            c.Status == CertificateStatus.NeedsReview, c.BatchNo, c.DiscoveredAt)).ToList();
+            c.Status == CertificateStatus.NeedsReview, c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt)).ToList();
 
         return ApiResponse<PagedResult<CertificateListItemDto>>.SuccessResponse(new PagedResult<CertificateListItemDto>
         {
@@ -147,7 +147,7 @@ public class CertificateService : ICertificateService
             c.Id, c.FileName, c.Provider.ToString(), c.PlateLetters, c.PlateDigits,
             PlateText.Display(c.PlateLetters, c.PlateDigits), c.NormalizedPlate,
             c.Make, c.Model, c.Color, c.Lessor, c.Status.ToString(), c.StatusNote,
-            c.IsManuallyEdited, !string.IsNullOrEmpty(c.StoragePath), c.BatchNo, c.DiscoveredAt);
+            c.IsManuallyEdited, !string.IsNullOrEmpty(c.StoragePath), c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt);
     }
 
     //// =====================================================================

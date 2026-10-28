@@ -37,6 +37,6 @@ public class Certificate : BaseEntity
 
     /// <summary>النسخة المحلية من الـ PDF (للعرض والتنزيل بسرعة ومن غير الاعتماد على Drive).</summary>
     public string? StoragePath { get; set; }
-
+    public DateTime DriveCreatedAt { get; set; }
     public bool IsManuallyEdited { get; set; }
 }
