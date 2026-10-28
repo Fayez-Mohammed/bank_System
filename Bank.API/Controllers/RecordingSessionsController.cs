@@ -24,6 +24,7 @@ public class RecordingSessionsController : ControllerBase
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
     /// <summary>
     /// Creates a manual check for a specific plate number. This is useful for situations where the automatic transcription or matching process fails, and a manual intervention is required. The request should include the district, street, plate number, and optionally the vehicle type and Excel sheet name. The response will indicate whether the manual check was successfully created.
     /// </summary>

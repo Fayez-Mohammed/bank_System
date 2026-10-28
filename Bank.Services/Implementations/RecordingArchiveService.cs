@@ -43,15 +43,44 @@ public class RecordingArchiveService : IRecordingArchiveService
             .FirstOrDefaultAsync(a => a.Id == id && a.UserId == currentUserId, cancellationToken);
 
         if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
+        var rawPlate = request.RawPlate.Trim();
+        var normalized = PlateNormalizer.Normalize(rawPlate);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return ApiResponse<bool>.Fail("رقم اللوحة غير صالح.", null, 400);
 
-        row.RawPlate = request.RawPlate.Trim();
-        row.NormalizedPlate = PlateNormalizer.Normalize(request.RawPlate);
+        // اللوحة اتغيرت → نعيد الـ matching على ملف التشيك النشط بتاع جروب اليوزر
+        // (أو ملفه الشخصي لو مش في جروب)
+        if (normalized != row.NormalizedPlate)
+        {
+            var groupId = await _dbContext.Users
+                .AsNoTracking()
+                .WithEffectiveGroup()
+                .Where(x => x.User.Id == currentUserId)
+                .Select(x => x.GroupId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var activeCheckFileId = await _dbContext.CheckFiles
+                .Where(f => f.IsActive)
+                .Where(f => groupId.HasValue
+                    ? f.GroupId == groupId.Value
+                    : f.GroupId == null && f.UploadedBy == currentUserId)
+                .Select(f => (Guid?)f.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            row.IsMatched = activeCheckFileId.HasValue
+                && await _dbContext.CheckPlates.AnyAsync(
+                    cp => cp.CheckFileId == activeCheckFileId.Value && cp.NormalizedPlate == normalized,
+                    cancellationToken);
+        }
+
+        row.RawPlate = rawPlate;
+        row.NormalizedPlate = normalized;
         row.VehicleType = request.VehicleType;
         row.District = request.District;
         row.Street = request.Street;
         row.Notes = request.Notes;
         row.RecorderName = request.RecorderName;
-
+        
         await _dbContext.SaveChangesAsync(cancellationToken);
 
        

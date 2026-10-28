@@ -7,6 +7,11 @@ namespace Bank.Services.Interfaces;
 
 public interface ILiveCheckSessionService
 {
+    Task<ApiResponse<bool>> UpdateRowAsync(
+    long id, Guid userId, UpdateLiveCheckLogRowDto request, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<bool>> DeleteRowAsync(
+        long id, Guid userId, CancellationToken cancellationToken = default);
     // ⭐ الميثودز دي بتتنادى من الـ SignalR Hub (streaming lifecycle)
     Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
         Guid userId, string? recorderName, string? district, string? street, string? excelSheetName, CancellationToken cancellationToken = default);

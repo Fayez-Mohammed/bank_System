@@ -6,7 +6,19 @@ public record LiveCheckPlateResultDto(
     long Id, string NormalizedPlate, string? VehicleType, bool IsMatched,
     string? LocationLink, DateTime CheckedAt, string? BankName,
     string? VehicleTypeInCheckFile);
+public class UpdateLiveCheckLogRowDto
+{
+    public string RawPlate { get; set; } = null!;
+    public string? VehicleType { get; set; }
+    public string? District { get; set; }
+    public string? Street { get; set; }
 
+    // اختياري: لو اتبعت، بيغيّر اسم المسجل على الجلسة كلها (لأنه محفوظ على الجلسة مش على الصف)
+    public string? RecorderName { get; set; }
+
+    // لو true: الحي والشارع يتطبّقوا على الجلسة وكل صفوفها
+    public bool ApplyDistrictStreetToWholeSession { get; set; } = false;
+}
 public class CreateManualLiveCheckRequestDto
 {
     // اختياريين في التشييك.

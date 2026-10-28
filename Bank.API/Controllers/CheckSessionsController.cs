@@ -22,6 +22,28 @@ public class CheckSessionsController : ControllerBase
     }
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+    /// <summary>تعديل صف لوحة في تشييك لحظي (مع خيار تطبيق الحي/الشارع على الجلسة كلها).</summary>
+    [HttpPut("plates/{id:long}")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 409)]
+    public async Task<IActionResult> UpdateRow(long id, [FromBody] UpdateLiveCheckLogRowDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateRowAsync(id, CurrentUserId, request, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>حذف صف لوحة من تشييك لحظي.</summary>
+    [HttpDelete("plates/{id:long}")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 409)]
+    public async Task<IActionResult> DeleteRow(long id, CancellationToken cancellationToken)
+    {
+        var result = await _service.DeleteRowAsync(id, CurrentUserId, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 
     /// <summary>تشيك يدوي — standalone، بيعمل ميني-session لوحده وبيرجّع النتيجة فورًا.</summary>
     [HttpPost("manual-check")]

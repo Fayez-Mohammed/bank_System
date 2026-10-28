@@ -31,7 +31,139 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         _fileStorage = fileStorage;
         _permissions = permissions;
     }
+    public async Task<ApiResponse<bool>> UpdateRowAsync(
+    long id, Guid userId, UpdateLiveCheckLogRowDto request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.RawPlate))
+            return ApiResponse<bool>.Fail("رقم اللوحة مطلوب.", null, 400);
 
+        var rawPlate = request.RawPlate.Trim();
+        var normalized = PlateNormalizer.Normalize(rawPlate);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return ApiResponse<bool>.Fail("رقم اللوحة غير صالح.", null, 400);
+
+        var vehicleType = string.IsNullOrWhiteSpace(request.VehicleType) ? null : request.VehicleType.Trim();
+        var district = string.IsNullOrWhiteSpace(request.District) ? null : request.District.Trim();
+        var street = string.IsNullOrWhiteSpace(request.Street) ? null : request.Street.Trim();
+        var recorderName = string.IsNullOrWhiteSpace(request.RecorderName) ? null : request.RecorderName.Trim();
+
+        if (recorderName is { Length: > 200 })
+            return ApiResponse<bool>.Fail("اسم المسجل طويل جدًا.", null, 400);
+
+        // الحي والشارع في الجلسة مش nullable، فمينفعش نطبّق قيمة فاضية على الجلسة كلها
+        if (request.ApplyDistrictStreetToWholeSession && (district is null || street is null))
+            return ApiResponse<bool>.Fail("الحي والشارع مطلوبين لو هتطبّقهم على الجلسة كلها.", null, 400);
+
+        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
+        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
+
+        var row = await _dbContext.LiveCheckLogs
+            .Include(l => l.CheckSession)
+            .Where(l => l.Id == id)
+            .Where(l => userScope.GroupId.HasValue
+                ? l.CheckSession.GroupId == userScope.GroupId.Value
+                : l.CheckSession.GroupId == null && l.CheckSession.UserId == userId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
+
+        var session = row.CheckSession;
+
+        // الـ correction/replacement اللحظيين بيشتغلوا على آخر صف في الجلسة، فمنع التعديل أثناء التسجيل
+        if (session.Status == SessionStatus.Recording)
+            return ApiResponse<bool>.Fail("الجلسة لسه شغالة — أوقفها الأول قبل التعديل.", null, 409);
+
+        // لو اللوحة اتغيرت: نعيد الـ matching على ملف التشيك اللي اتسجلت عليه الجلسة
+        if (normalized != row.NormalizedPlate)
+        {
+            long? matchedCheckPlateId = null;
+            if (session.CheckFileId.HasValue)
+            {
+                matchedCheckPlateId = await _dbContext.CheckPlates
+                    .Where(cp => cp.CheckFileId == session.CheckFileId.Value && cp.NormalizedPlate == normalized)
+                    .Select(cp => (long?)cp.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            row.NormalizedPlate = normalized;
+            row.IsMatched = matchedCheckPlateId.HasValue;
+            row.MatchedCheckPlateId = matchedCheckPlateId;
+        }
+
+        row.RawPlate = rawPlate;
+        row.VehicleType = vehicleType;
+        row.District = district;
+        row.Street = street;
+
+        if (recorderName is not null) session.RecorderName = recorderName;
+
+        if (request.ApplyDistrictStreetToWholeSession)
+        {
+            session.District = district!;
+            session.Street = street!;
+        }
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (request.ApplyDistrictStreetToWholeSession)
+        {
+            var sessionId = session.Id;
+            await _dbContext.LiveCheckLogs
+                .Where(l => l.CheckSessionId == sessionId && l.Id != id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(l => l.District, district)
+                    .SetProperty(l => l.Street, street),
+                    cancellationToken);
+
+            _logger.LogInformation(
+                "District/Street propagated to whole CheckSession {SessionId} from LiveCheckLog {Id} by user {UserId}",
+                sessionId, id, userId);
+        }
+
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("LiveCheckLog {Id} updated by user {UserId}", id, userId);
+        return ApiResponse<bool>.SuccessResponse(true);
+    }
+
+    public async Task<ApiResponse<bool>> DeleteRowAsync(
+        long id, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
+        if (userScope is null) return ApiResponse<bool>.Fail("المستخدم غير موجود.");
+
+        var row = await _dbContext.LiveCheckLogs
+            .AsNoTracking()
+            .Where(l => l.Id == id)
+            .Where(l => userScope.GroupId.HasValue
+                ? l.CheckSession.GroupId == userScope.GroupId.Value
+                : l.CheckSession.GroupId == null && l.CheckSession.UserId == userId)
+            .Select(l => new { l.CheckSessionId, l.CheckSession.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
+
+        if (row.Status == SessionStatus.Recording)
+            return ApiResponse<bool>.Fail("الجلسة لسه شغالة — أوقفها الأول قبل الحذف.", null, 409);
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        await _dbContext.LiveCheckLogs.Where(l => l.Id == id).ExecuteDeleteAsync(cancellationToken);
+
+        var remaining = await _dbContext.LiveCheckLogs
+            .CountAsync(l => l.CheckSessionId == row.CheckSessionId, cancellationToken);
+
+        await _dbContext.CheckSessions
+            .Where(s => s.Id == row.CheckSessionId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(s => s.TotalPlates, remaining), cancellationToken);
+
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("LiveCheckLog {Id} deleted by user {UserId}", id, userId);
+        return ApiResponse<bool>.SuccessResponse(true);
+    }
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
         Guid userId, string? recorderName, string? district, string? street, string? excelSheetName, CancellationToken cancellationToken = default)
     {
