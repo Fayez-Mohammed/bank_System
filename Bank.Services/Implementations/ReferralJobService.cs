@@ -296,7 +296,7 @@ public class ReferralJobService : IReferralJobService
         List<ExcelSheetData> sheets;
         await using (var stream = request.File.OpenReadStream())
         {
-            sheets = ExcelSheetReader.ReadSelectedSheets(stream, extension, allSheets: false, selectedIndexes);
+            sheets = ExcelSheetReader.ReadSelectedSheets(stream, extension, allSheets: false, selectedIndexes, request.Password);
         }
 
         var plateColumnBySheet = request.Sheets.ToDictionary(s => s.SheetIndex, s => s.PlateColumnIndex);

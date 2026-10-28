@@ -97,7 +97,7 @@ namespace Bank.Services.Helpers
 
         /// <summary>بيقرأ محتوى الـ Sheets المختارة بس (أو كلها لو allSheets=true).</summary>
         public static List<ExcelSheetData> ReadSelectedSheets(
-            Stream stream, string extension, bool allSheets, List<int>? selectedIndexes)
+            Stream stream, string extension, bool allSheets, List<int>? selectedIndexes, string? password = null)
         {
             if (extension == ".csv")
             {
@@ -123,7 +123,12 @@ namespace Bank.Services.Helpers
             var selectedSet = selectedIndexes is null ? null : new HashSet<int>(selectedIndexes);
             var result = new List<ExcelSheetData>();
 
-            using var reader = ExcelReaderFactory.CreateReader(stream);
+            var readerConfig = new ExcelReaderConfiguration
+            {
+                Password = password
+            };
+
+            using var reader = ExcelReaderFactory.CreateReader(stream, readerConfig);
             var sheetIndex = 0;
 
             do
