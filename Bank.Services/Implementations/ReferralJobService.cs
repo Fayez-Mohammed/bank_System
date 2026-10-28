@@ -49,6 +49,20 @@ public class ReferralJobService : IReferralJobService
         _checkPlateCache = checkPlateCache;
         _configuration = configuration;
     }
+    public async Task<ApiResponse<int>> DeleteAllAsync(Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        // عمليات الفرز اللي المستخدم ده عملها هو بس (مش بتاعة الجروب كله)
+        var query = _dbContext.ReferralJobs.Where(j => j.UserId == currentUserId);
+
+        var count = await query.CountAsync(cancellationToken);
+        if (count == 0) return ApiResponse<int>.SuccessResponse(0, "مفيش عمليات فرز تمسحها أصلاً.");
+
+        // Cascade في الداتابيز بيشيل ReferralPlates وMatchResults تلقائيًا
+        await query.ExecuteDeleteAsync(cancellationToken);
+
+        _logger.LogInformation("Deleted all {Count} referral jobs for user {UserId}", count, currentUserId);
+        return ApiResponse<int>.SuccessResponse(count, $"اتمسح {count} عملية فرز.");
+    }
     public async Task<ApiResponse<Guid>> CreateFromActiveCheckFileAsync(
      Guid userId, CancellationToken cancellationToken = default)
     {

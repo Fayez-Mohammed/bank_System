@@ -6,6 +6,7 @@ namespace Bank.Services.Interfaces;
 
 public interface IReferralJobService
 {
+    Task<ApiResponse<int>> DeleteAllAsync(Guid currentUserId, CancellationToken cancellationToken = default);
     Task<ApiResponse<Guid>> CreateFromActiveCheckFileAsync(
     Guid userId, CancellationToken cancellationToken = default);
     Task<(byte[] FileBytes, string FileName)> ExportCombinedResultsAsync(

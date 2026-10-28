@@ -35,7 +35,118 @@ public class AdminService : IAdminService
             .Select(g => (Guid?)g.Id)
             .FirstOrDefaultAsync(ct);
     }
+    public async Task<ApiResponse<PagedResult<MatchedPlateRowDto>>> GetGroupMatchedPlatesAsync(
+    Guid currentAdminId, PaginationParams pagination, CancellationToken ct = default)
+    {
+        var myGroupId = await GetMyGroupIdAsync(currentAdminId, ct);
+        if (myGroupId is null)
+            return ApiResponse<PagedResult<MatchedPlateRowDto>>.Fail("You do not currently administer any active group.");
 
+        // يوزرات الجروب + الأدمن نفسه
+        var archive = _context.RecordingArchivePlates.AsNoTracking()
+            .Where(a => a.IsMatched && (a.User.GroupId == myGroupId || a.UserId == currentAdminId));
+
+        var live = _context.LiveCheckLogs.AsNoTracking()
+            .Where(l => l.IsMatched && (l.User.GroupId == myGroupId || l.UserId == currentAdminId));
+
+        return await PageMatchedRowsAsync(archive, live, pagination, ct);
+    }
+
+    public async Task<ApiResponse<PagedResult<MatchedPlateRowDto>>> GetUserMatchedPlatesAsync(
+        Guid currentAdminId, Guid targetUserId, PaginationParams pagination, CancellationToken ct = default)
+    {
+        var myGroupId = await GetMyGroupIdAsync(currentAdminId, ct);
+        if (myGroupId is null)
+            return ApiResponse<PagedResult<MatchedPlateRowDto>>.Fail("You do not currently administer any active group.");
+
+        // لازم اليوزر يكون في جروب الأدمن (أو الأدمن نفسه)
+        var inMyGroup = await _context.Users.AsNoTracking()
+            .AnyAsync(u => u.Id == targetUserId && (u.GroupId == myGroupId || u.Id == currentAdminId), ct);
+
+        if (!inMyGroup)
+            return ApiResponse<PagedResult<MatchedPlateRowDto>>.Fail("User not found in your group.", null, 404);
+
+        var archive = _context.RecordingArchivePlates.AsNoTracking()
+            .Where(a => a.IsMatched && a.UserId == targetUserId);
+
+        var live = _context.LiveCheckLogs.AsNoTracking()
+            .Where(l => l.IsMatched && l.UserId == targetUserId);
+
+        return await PageMatchedRowsAsync(archive, live, pagination, ct);
+    }
+
+    private static async Task<ApiResponse<PagedResult<MatchedPlateRowDto>>> PageMatchedRowsAsync(
+        IQueryable<RecordingArchivePlate> archive, IQueryable<LiveCheckLog> live,
+        PaginationParams pagination, CancellationToken ct)
+    {
+        var archiveRows = archive.Select(a => new MatchedPlateRowDto
+        {
+            Source = "Archive",
+            Id = a.Id,
+            UserId = a.UserId,
+            UserFullName = a.User.FullName,
+            RecorderName = a.RecorderName,
+            NormalizedPlate = a.NormalizedPlate,
+            RawPlate = a.RawPlate,
+            VehicleType = a.VehicleType,
+            District = a.District,
+            Street = a.Street,
+            Notes = a.Notes,
+            LocationLink = a.Location,
+            RecordedAt = a.RecordedAt,
+            SessionId = a.SourceSessionId,
+            AppendedToDataFileId = a.AppendedToDataFileId
+        });
+
+        var liveRows = live.Select(l => new MatchedPlateRowDto
+        {
+            Source = "LiveCheck",
+            Id = l.Id,
+            UserId = l.UserId,
+            UserFullName = l.User.FullName,
+            RecorderName = l.CheckSession.RecorderName,
+            NormalizedPlate = l.NormalizedPlate,
+            RawPlate = l.RawPlate,
+            VehicleType = l.VehicleType,
+            District = l.District,
+            Street = l.Street,
+            Notes = null,
+            LocationLink = l.Location,
+            RecordedAt = l.CheckedAt,
+            SessionId = l.CheckSessionId,
+            AppendedToDataFileId = null
+        });
+
+        var rows = archiveRows.Concat(liveRows);   // UNION ALL في الداتابيز
+
+        if (!string.IsNullOrWhiteSpace(pagination.SearchTerm))
+        {
+            var term = pagination.SearchTerm.Trim().ToLower();
+            rows = rows.Where(r =>
+                r.NormalizedPlate.ToLower().Contains(term) ||
+                r.RawPlate.ToLower().Contains(term) ||
+                r.UserFullName.ToLower().Contains(term) ||
+                (r.RecorderName != null && r.RecorderName.ToLower().Contains(term)));
+        }
+
+        var totalCount = await rows.CountAsync(ct);
+
+        var items = await rows
+            .OrderByDescending(r => r.RecordedAt)
+            .ThenBy(r => r.Source)
+            .ThenByDescending(r => r.Id)
+            .Skip((pagination.PageNumber - 1) * pagination.PageSize)
+            .Take(pagination.PageSize)
+            .ToListAsync(ct);
+
+        return ApiResponse<PagedResult<MatchedPlateRowDto>>.SuccessResponse(new PagedResult<MatchedPlateRowDto>
+        {
+            Items = items,
+            PageNumber = pagination.PageNumber,
+            PageSize = pagination.PageSize,
+            TotalCount = totalCount
+        });
+    }
     public async Task<ApiResponse<PagedResult<GroupMemberResponseDto>>> GetMyGroupMembersAsync(
         Guid currentAdminId, PaginationParams pagination, CancellationToken ct = default)
     {

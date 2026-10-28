@@ -26,6 +26,16 @@ public class ReferralJobsController : ControllerBase
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
     /// <summary>
+    /// Deletes all referral jobs created by the current user only.
+    /// </summary>
+    [HttpDelete]
+    [ProducesResponseType(typeof(ApiResponse<int>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DeleteAll(CancellationToken cancellationToken)
+    {
+        var result = await _referralJobService.DeleteAllAsync(CurrentUserId, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+    /// <summary>
     /// Treats the user's active check file as a referral file and runs it through the normal
     /// referral matching flow against all active historical data files. Results show BankName
     /// and VehicleType from the check file as the "referral columns", alongside the usual

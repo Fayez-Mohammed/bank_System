@@ -3,6 +3,11 @@ using Bank.Shared.DTOs.AdminDTOs;
 
 public interface IAdminService
 {
+    Task<ApiResponse<PagedResult<MatchedPlateRowDto>>> GetGroupMatchedPlatesAsync(
+    Guid currentAdminId, PaginationParams pagination, CancellationToken ct = default);
+
+    Task<ApiResponse<PagedResult<MatchedPlateRowDto>>> GetUserMatchedPlatesAsync(
+        Guid currentAdminId, Guid targetUserId, PaginationParams pagination, CancellationToken ct = default);
     Task<ApiResponse<PagedResult<GroupMemberResponseDto>>> GetMyGroupMembersAsync(
         Guid currentAdminId, PaginationParams pagination, CancellationToken ct = default);
 

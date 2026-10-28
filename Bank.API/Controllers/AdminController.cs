@@ -27,6 +27,31 @@ public class AdminController : ControllerBase
 
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
     /// <summary>
+    /// All matched plates (archive + live check) for the current admin's group.
+    /// </summary>
+    [HttpGet("matched-plates")]
+    [ProducesResponseType(typeof(ApiResponse<PagedResult<MatchedPlateRowDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetGroupMatchedPlates(
+        [FromQuery] PaginationParams pagination, CancellationToken cancellationToken)
+    {
+        var result = await _adminService.GetGroupMatchedPlatesAsync(CurrentUserId, pagination, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>
+    /// Matched plates (archive + live check) for one specific user in the admin's group.
+    /// </summary>
+    [HttpGet("users/{userId:guid}/matched-plates")]
+    [ProducesResponseType(typeof(ApiResponse<PagedResult<MatchedPlateRowDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetUserMatchedPlates(
+        Guid userId, [FromQuery] PaginationParams pagination, CancellationToken cancellationToken)
+    {
+        var result = await _adminService.GetUserMatchedPlatesAsync(CurrentUserId, userId, pagination, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+    /// <summary>
     /// Get all group members of the current admin's group with pagination support.
     /// </summary>
     /// <param name="pagination">Pagination parameters</param>
