@@ -74,27 +74,59 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             return ApiResponse<bool>.Fail("الجلسة لسه شغالة — أوقفها الأول قبل التعديل.", null, 409);
 
         // لو اللوحة اتغيرت: نعيد الـ matching على ملف التشيك اللي اتسجلت عليه الجلسة
+        //if (normalized != row.NormalizedPlate)
+        //{
+        //    long? matchedCheckPlateId = null;
+        //    if (session.CheckFileId.HasValue)
+        //    {
+        //        matchedCheckPlateId = await _dbContext.CheckPlates
+        //            .Where(cp => cp.CheckFileId == session.CheckFileId.Value && cp.NormalizedPlate == normalized)
+        //            .Select(cp => (long?)cp.Id)
+        //            .FirstOrDefaultAsync(cancellationToken);
+        //    }
+
+        //    row.NormalizedPlate = normalized;
+        //    row.IsMatched = matchedCheckPlateId.HasValue;
+        //    row.MatchedCheckPlateId = matchedCheckPlateId;
+        //}
+        // لو اللوحة اتغيرت: نعيد الـ matching على ملف التشيك اللي اتسجلت عليه الجلسة
         if (normalized != row.NormalizedPlate)
         {
             long? matchedCheckPlateId = null;
+            string? bankName = null;
+            string? vehicleTypeInCheckFile = null;
+
             if (session.CheckFileId.HasValue)
             {
-                matchedCheckPlateId = await _dbContext.CheckPlates
+                var matchResult = await _dbContext.CheckPlates
                     .Where(cp => cp.CheckFileId == session.CheckFileId.Value && cp.NormalizedPlate == normalized)
-                    .Select(cp => (long?)cp.Id)
+                    .Select(cp => new
+                    {
+                        Id = (long?)cp.Id,
+                        BankName = cp.BankName,
+                        VehicleType = cp.VehicleType
+                    })
                     .FirstOrDefaultAsync(cancellationToken);
+
+                if (matchResult != null)
+                {
+                    matchedCheckPlateId = matchResult.Id;
+                    bankName = matchResult.BankName;
+                    vehicleTypeInCheckFile = matchResult.VehicleType;
+                }
             }
 
             row.NormalizedPlate = normalized;
             row.IsMatched = matchedCheckPlateId.HasValue;
             row.MatchedCheckPlateId = matchedCheckPlateId;
-        }
 
+            row.BankName = bankName;
+            row.VehicleTypeInCheckFile = vehicleTypeInCheckFile;
+        }
         row.RawPlate = rawPlate;
         row.VehicleType = vehicleType;
         row.District = district;
         row.Street = street;
-
         if (recorderName is not null) session.RecorderName = recorderName;
 
         if (request.ApplyDistrictStreetToWholeSession)
