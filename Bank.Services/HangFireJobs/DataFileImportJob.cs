@@ -43,7 +43,7 @@ public class DataFileImportJob
     }
 
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
-    public async Task ImportAsync(Guid dataFileId, Guid userId, string storagePath, bool isAppend, CancellationToken cancellationToken)
+    public async Task ImportAsync(Guid dataFileId, Guid userId, string storagePath,string? password, bool isAppend, CancellationToken cancellationToken)
     {
         var totalStopwatch = Stopwatch.StartNew();
         _logger.LogInformation("Import job started for DataFile {DataFileId} (append={IsAppend})", dataFileId, isAppend);
@@ -99,7 +99,12 @@ public class DataFileImportJob
             }
             else
             {
-                using var excelReader = ExcelReaderFactory.CreateReader(stream);
+                //  using var excelReader = ExcelReaderFactory.CreateReader(stream);
+                var readerConfig = new ExcelReaderConfiguration
+                {
+                    Password = password // 💡 تمرير كلمة السر هنا
+                };
+                using var excelReader = ExcelReaderFactory.CreateReader(stream, readerConfig);
                 var map = DetectColumnsFromExcel(excelReader);
                 using var readerWrapper = new ExcelDataReaderWrapper(excelReader, map, dataFileId, userId);
                 totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, cancellationToken);
@@ -133,6 +138,22 @@ public class DataFileImportJob
             _logger.LogInformation(
                 "PHASE commit: {ElapsedMs}ms | TOTAL import for DataFile {DataFileId}: {TotalMs}ms ({TotalRows} rows)",
                 commitStopwatch.ElapsedMilliseconds, dataFileId, totalStopwatch.ElapsedMilliseconds, totalInserted);
+        }
+        catch (ExcelDataReader.Exceptions.InvalidPasswordException ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning(ex, "Import failed for DataFile {DataFileId}: Password protected or invalid password", dataFileId);
+
+            var errorMessage = "الملف محمي بكلمة سر. يرجى إدخال كلمة السر الصحيحة لفتح الملف.";
+
+            await _dbContext.DataFiles
+                .Where(f => f.Id == dataFileId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(f => f.ImportStatus, DataFileImportStatus.Failed)
+                    .SetProperty(f => f.ImportError, errorMessage),
+                    cancellationToken);
+
+            throw;
         }
         catch (Exception ex)
         {

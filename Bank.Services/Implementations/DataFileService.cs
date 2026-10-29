@@ -145,7 +145,7 @@ public class DataFileService : IDataFileService
             dataFile.Id, userScope.GroupId, uploaderId);
 
         _backgroundJobClient.Enqueue<DataFileImportJob>(job =>
-            job.ImportAsync(dataFile.Id, uploaderId, storagePath, false, CancellationToken.None));
+            job.ImportAsync(dataFile.Id, uploaderId, storagePath, request.Password, false, CancellationToken.None));
 
         return ApiResponse<Guid>.SuccessResponse(dataFile.Id, "الملف اتقبل وبدأ يتعالج في الخلفية.", 201);
     }
@@ -187,7 +187,7 @@ public class DataFileService : IDataFileService
             dataFileId, currentUserId);
 
         _backgroundJobClient.Enqueue<DataFileImportJob>(job =>
-            job.ImportAsync(dataFileId, currentUserId, appendStoragePath, true, CancellationToken.None));
+            job.ImportAsync(dataFileId, currentUserId, appendStoragePath,null, true, CancellationToken.None));
 
         return ApiResponse<bool>.SuccessResponse(true, "جاري إلحاق البيانات في الخلفية.");
     }
