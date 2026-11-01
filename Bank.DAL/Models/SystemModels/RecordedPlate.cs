@@ -26,6 +26,8 @@ public class RecordedPlate : BaseEntityLong
     public Point? Location { get; set; }
 
     public int? AudioOffsetMs { get; set; }
+    public int? AudioStartMs { get; set; }
+    public int? AudioEndMs { get; set; }
 
     public bool IsMatched { get; set; }                     // 1 if found in active check file (Green Row)
     public long? MatchedCheckPlateId { get; set; }

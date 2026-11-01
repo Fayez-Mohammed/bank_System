@@ -46,6 +46,8 @@ public class RecordingSessionConfiguration : BaseEntityConfiguration<RecordingSe
 
         builder.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("now()").IsRequired();
         builder.Property(x => x.EndedAt).HasColumnName("ended_at");
+        builder.Property(x => x.ReviewedAt).HasColumnName("reviewed_at");
+        builder.Property(x => x.ReviewedBy).HasColumnName("reviewed_by");
 
         builder.HasIndex(x => new { x.UserId, x.StartedAt });
         builder.HasIndex(x => new { x.GroupId, x.StartedAt });

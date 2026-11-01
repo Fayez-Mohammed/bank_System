@@ -20,6 +20,8 @@ public class LiveCheckLog : BaseEntityLong
     public string NormalizedPlate { get; set; } = null!;
     public CheckType CheckType { get; set; } = CheckType.Live;
     public string? VehicleType { get; set; }
+    public string? Notes { get; set; }
+    public int? AudioOffsetMs { get; set; }   // the AI's timestamp_ms: position in the live audio
 
     public string? District { get; set; }
     public string? Street { get; set; }

@@ -21,7 +21,13 @@ public interface IRecordingSessionService
     Task<ApiResponse<bool>> CompleteAsync(
         Guid sessionId, Guid currentUserId, IFormFile audioFile, CancellationToken cancellationToken = default);
 
-    Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default);
+    // force = re-process even though the user changed plates in this session (those changes leave the app).
+    Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, bool force = false, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<Bank.Shared.DTOs.TrainingDTOs.AddedSessionPlateDto>> AddPlateAsync(
+        Guid sessionId, Guid currentUserId, Bank.Shared.DTOs.TrainingDTOs.AddSessionPlateRequestDto request, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<bool>> MarkReviewedAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default);
 
     Task<ApiResponse<List<RecordingSessionSummaryDto>>> GetAllAsync(Guid currentUserId, CancellationToken cancellationToken = default);
 

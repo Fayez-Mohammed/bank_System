@@ -96,6 +96,7 @@ namespace Bank.API.Services
             services.AddScoped<DataFileImportJob>();
             services.AddScoped<ReferralMatchingJob>();
             services.AddScoped<IRecordingArchiveService, RecordingArchiveService>();
+            services.AddScoped<ITrainingCorrectionsService, TrainingCorrectionsService>();
             services.AddScoped<IRecordingSessionService, RecordingSessionService>();
             services.AddHttpClient<IAiTranscriptionService, AiTranscriptionService>();
 

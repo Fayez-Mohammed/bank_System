@@ -50,7 +50,7 @@ public class RecordingProcessingJob
         try
         {
             await using var audioStream = await _fileStorage.OpenReadAsync(session.AudioUrl, cancellationToken);
-            var aiResult = await _aiService.TranscribeAsync(audioStream, "recording.aac", "audio/aac", cancellationToken);
+            var aiResult = await _aiService.TranscribeAsync(audioStream, "recording.aac", "audio/aac", sessionId.ToString(), cancellationToken);
 
             var gpsPoints = await _dbContext.RecordingGpsPoints
                 .AsNoTracking()
@@ -108,6 +108,8 @@ public class RecordingProcessingJob
                     Street = session.Street,
                     Location = nearestLocation,
                     AudioOffsetMs = effectiveOffsetMs,
+                    AudioStartMs = car.TimestampStartMs,
+                    AudioEndMs = car.TimestampEndMs,
                     IsMatched = isMatched,
                     MatchedCheckPlateId = isMatched ? matchedCheckPlateId : null,
                     IsManualEntry = false,
@@ -142,7 +144,7 @@ public class RecordingProcessingJob
 
             var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
                 p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District, session.Street, p.Notes,
-                LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched)).ToList();
+                LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched, p.Id)).ToList();
 
             await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);
 

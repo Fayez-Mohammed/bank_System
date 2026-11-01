@@ -73,6 +73,34 @@ public class RecordingArchiveService : IRecordingArchiveService
                     cancellationToken);
         }
 
+        // Same SaveChanges as the edit below: the edit and its history row succeed or fail together.
+        if (normalized != row.NormalizedPlate
+            || !PlateCorrectionHelper.Same(request.VehicleType, row.VehicleType)
+            || !PlateCorrectionHelper.Same(request.Notes, row.Notes))
+        {
+            var source = await GetSourcePlateAsync(row.SourceRecordedPlateId, cancellationToken);
+            _dbContext.PlateCorrections.Add(new PlateCorrection
+            {
+                SessionId = row.SourceSessionId,
+                SessionType = PlateCorrectionSessionType.Recording,
+                PlateId = row.SourceRecordedPlateId,
+                ArchiveRowId = row.Id,
+                IsManualPlate = source?.IsManualEntry ?? false,
+                Action = PlateCorrectionAction.Edit,
+                OldPlate = row.NormalizedPlate,
+                NewPlate = normalized,
+                OldVehicleType = row.VehicleType,
+                NewVehicleType = request.VehicleType,
+                OldNotes = row.Notes,
+                NewNotes = request.Notes,
+                AudioOffsetMs = source?.AudioOffsetMs,
+                AudioStartMs = source?.AudioStartMs,
+                AudioEndMs = source?.AudioEndMs,
+                UserId = currentUserId,
+                RecorderName = request.RecorderName ?? row.RecorderName
+            });
+        }
+
         row.RawPlate = rawPlate;
         row.NormalizedPlate = normalized;
         row.VehicleType = request.VehicleType;
@@ -140,6 +168,7 @@ public class RecordingArchiveService : IRecordingArchiveService
             RecordedAt = e.RecordedAt,
             RecorderName = e.RecorderName,
             SourceSessionId = sessionId,
+            SourceRecordedPlateId = e.SourceRecordedPlateId,
             IsMatched = e.IsMatched
         });
 
@@ -388,13 +417,47 @@ public class RecordingArchiveService : IRecordingArchiveService
 
     public async Task<ApiResponse<bool>> DeleteRowAsync(long id, Guid currentUserId, CancellationToken cancellationToken = default)
     {
-        var deleted = await _dbContext.RecordingArchivePlates
-            .Where(a => a.Id == id && a.UserId == currentUserId)
-            .ExecuteDeleteAsync(cancellationToken);
-        if (deleted == 0) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
+        var row = await _dbContext.RecordingArchivePlates
+            .FirstOrDefaultAsync(a => a.Id == id && a.UserId == currentUserId, cancellationToken);
+        if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
+
+        var source = await GetSourcePlateAsync(row.SourceRecordedPlateId, cancellationToken);
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = row.SourceSessionId,
+            SessionType = PlateCorrectionSessionType.Recording,
+            PlateId = row.SourceRecordedPlateId,
+            ArchiveRowId = row.Id,
+            IsManualPlate = source?.IsManualEntry ?? false,
+            Action = PlateCorrectionAction.Delete,
+            OldPlate = row.NormalizedPlate,
+            OldVehicleType = row.VehicleType,
+            OldNotes = row.Notes,
+            AudioOffsetMs = source?.AudioOffsetMs,
+            AudioStartMs = source?.AudioStartMs,
+            AudioEndMs = source?.AudioEndMs,
+            UserId = currentUserId,
+            RecorderName = row.RecorderName
+        });
+        _dbContext.RecordingArchivePlates.Remove(row);
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Deleted RecordingArchivePlate {Id} for user {UserId}", id, currentUserId);
         return ApiResponse<bool>.SuccessResponse(true);
     }
+    private sealed record SourcePlate(bool IsManualEntry, int? AudioOffsetMs, int? AudioStartMs, int? AudioEndMs);
+
+    // The AI's row may be gone (session deleted, or an archive row older than this link): null is fine.
+    private async Task<SourcePlate?> GetSourcePlateAsync(long? recordedPlateId, CancellationToken cancellationToken)
+    {
+        if (recordedPlateId is null) return null;
+
+        return await _dbContext.RecordedPlates
+            .AsNoTracking()
+            .Where(p => p.Id == recordedPlateId.Value)
+            .Select(p => new SourcePlate(p.IsManualEntry, p.AudioOffsetMs, p.AudioStartMs, p.AudioEndMs))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     private static byte[] BuildHistoricalWorkbook(List<RecordingArchivePlate> rows)
     {
         using var workbook = new XLWorkbook();

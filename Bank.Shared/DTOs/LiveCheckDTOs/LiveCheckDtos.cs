@@ -5,11 +5,13 @@ namespace Bank.Shared.DTOs.LiveCheckDTOs;
 public record LiveCheckPlateResultDto(
     long Id, string NormalizedPlate, string? VehicleType, bool IsMatched,
     string? LocationLink, DateTime CheckedAt, string? BankName,
-    string? VehicleTypeInCheckFile);
+    string? VehicleTypeInCheckFile, string? Notes = null);
 public class UpdateLiveCheckLogRowDto
 {
     public string RawPlate { get; set; } = null!;
     public string? VehicleType { get; set; }
+    // null = keep the current notes; "" = clear them
+    public string? Notes { get; set; }
     public string? District { get; set; }
     public string? Street { get; set; }
 
@@ -40,7 +42,7 @@ public record CheckSessionSummaryDto(
 
 public record LiveCheckLogRowDto(
     long Id, string NormalizedPlate, string? LocationLink, DateTime CheckedAt,
-    string? District, string? Street, string? RecorderName, string? VehicleType, bool IsMatched);
+    string? District, string? Street, string? RecorderName, string? VehicleType, bool IsMatched, string? Notes);
 
 // نفس فكرة ConvertArchiveToDataFileRequestDto بتاعة التسجيل — حدد واحد بس من الاتنين.
 public class ConvertCheckLogsToDataFileRequestDto

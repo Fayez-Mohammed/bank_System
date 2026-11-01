@@ -480,6 +480,14 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("recorder_name");
 
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reviewed_at");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reviewed_by");
+
                     b.Property<DateTime>("StartedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -757,6 +765,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("appended_to_data_file_id");
 
+                    b.Property<int?>("AudioOffsetMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_offset_ms");
+
                     b.Property<string>("BankName")
                         .HasColumnType("text")
                         .HasColumnName("bank_name");
@@ -808,6 +820,11 @@ namespace Bank.DAL.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("normalized_plate");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("notes");
 
                     b.Property<string>("RawPlate")
                         .IsRequired()
@@ -1170,6 +1187,109 @@ namespace Bank.DAL.Migrations
                     b.ToTable("match_results", (string)null);
                 });
 
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.PlateCorrection", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("action");
+
+                    b.Property<long?>("ArchiveRowId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("archive_row_id");
+
+                    b.Property<int?>("AudioEndMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_end_ms");
+
+                    b.Property<int?>("AudioOffsetMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_offset_ms");
+
+                    b.Property<int?>("AudioStartMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_start_ms");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<bool>("IsManualPlate")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_manual_plate");
+
+                    b.Property<string>("NewNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("new_notes");
+
+                    b.Property<string>("NewPlate")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("new_plate");
+
+                    b.Property<string>("NewVehicleType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("new_vehicle_type");
+
+                    b.Property<string>("OldNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("old_notes");
+
+                    b.Property<string>("OldPlate")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("old_plate");
+
+                    b.Property<string>("OldVehicleType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("old_vehicle_type");
+
+                    b.Property<long?>("PlateId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("plate_id");
+
+                    b.Property<string>("RecorderName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("recorder_name");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SessionType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("session_type");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("plate_corrections", (string)null);
+                });
+
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.RecordedPlate", b =>
                 {
                     b.Property<long>("Id")
@@ -1179,9 +1299,17 @@ namespace Bank.DAL.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<int?>("AudioEndMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_end_ms");
+
                     b.Property<int?>("AudioOffsetMs")
                         .HasColumnType("integer")
                         .HasColumnName("audio_offset_ms");
+
+                    b.Property<int?>("AudioStartMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("audio_start_ms");
 
                     b.Property<string>("BankName")
                         .HasColumnType("text")
@@ -1341,6 +1469,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("recorder_name");
 
+                    b.Property<long?>("SourceRecordedPlateId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("source_recorded_plate_id");
+
                     b.Property<Guid?>("SourceSessionId")
                         .HasColumnType("uuid")
                         .HasColumnName("source_session_id");
@@ -1466,6 +1598,14 @@ namespace Bank.DAL.Migrations
                     b.Property<string>("RecorderName")
                         .HasColumnType("text")
                         .HasColumnName("recorder_name");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reviewed_at");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reviewed_by");
 
                     b.Property<DateTime>("StartedAt")
                         .ValueGeneratedOnAdd()

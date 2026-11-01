@@ -114,9 +114,33 @@ public class RecordingSessionsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<List<RecordingSessionSummaryDto>>), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Retry(Guid sessionId, CancellationToken cancellationToken)
+    public async Task<IActionResult> Retry(Guid sessionId, [FromQuery] bool force, CancellationToken cancellationToken)
     {
-        var result = await _recordingService.RetryAsync(sessionId, CurrentUserId, cancellationToken);
+        var result = await _recordingService.RetryAsync(sessionId, CurrentUserId, force, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>Adds a plate the AI missed to an existing recording.</summary>
+    [HttpPost("{sessionId:guid}/plates")]
+    [ProducesResponseType(typeof(ApiResponse<Bank.Shared.DTOs.TrainingDTOs.AddedSessionPlateDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> AddPlate(
+        Guid sessionId, [FromBody] Bank.Shared.DTOs.TrainingDTOs.AddSessionPlateRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _recordingService.AddPlateAsync(sessionId, CurrentUserId, request, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>The user checked this recording: plates they did not change count as correct.</summary>
+    [HttpPost("{sessionId:guid}/review")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> MarkReviewed(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var result = await _recordingService.MarkReviewedAsync(sessionId, CurrentUserId, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
     /// <summary>

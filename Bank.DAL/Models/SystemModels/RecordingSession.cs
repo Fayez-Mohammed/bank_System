@@ -35,6 +35,8 @@ public class RecordingSession : BaseEntity
 
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? EndedAt { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public Guid? ReviewedBy { get; set; }
     //public DateTime? MatchesShownAt { get; set; }
     public virtual ICollection<RecordedPlate> RecordedPlates { get; set; } = new List<RecordedPlate>();
 

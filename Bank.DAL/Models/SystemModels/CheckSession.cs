@@ -29,6 +29,8 @@ public class CheckSession : BaseEntity
 
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? EndedAt { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public Guid? ReviewedBy { get; set; }
 
     public virtual ICollection<LiveCheckLog> Logs { get; set; } = new List<LiveCheckLog>();
 }

@@ -7,6 +7,7 @@ using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.RecordingArchiveDTOs;
 using Bank.Shared.DTOs.RecordingSessionDTOs;
+using Bank.Shared.DTOs.TrainingDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Hangfire;
@@ -182,7 +183,7 @@ public class RecordingSessionService : IRecordingSessionService
         return ApiResponse<bool>.SuccessResponse(true, "الصوت اتقبل وبيتعالج في الخلفية.", 202);
     }
 
-    public async Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
+    public async Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, bool force = false, CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.RecordingSessions
             .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
@@ -195,8 +196,35 @@ public class RecordingSessionService : IRecordingSessionService
             return ApiResponse<bool>.Fail("التسجيل لسه بيتعالج دلوقتي.", null, 409);
         }
 
+        // Re-processing replaces the session's plates and archive rows, so the user's changes are lost from
+        // the app. Their history stays in plate_corrections, closed by a Reprocessed row.
+        var lastReprocessedId = await _dbContext.PlateCorrections
+            .Where(c => c.SessionId == sessionId && c.Action == PlateCorrectionAction.Reprocessed)
+            .MaxAsync(c => (long?)c.Id, cancellationToken) ?? 0;
+        var hasUserChanges = await _dbContext.PlateCorrections
+            .AnyAsync(c => c.SessionId == sessionId && c.Id > lastReprocessedId, cancellationToken);
+
+        if (hasUserChanges && !force)
+        {
+            return ApiResponse<bool>.Fail("إعادة التفريغ هتمسح تعديلاتك على اللوحات. أكّد لو عايز تكمّل.", null, 409);
+        }
+
         await _dbContext.RecordedPlates.Where(p => p.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken);
 
+        if (hasUserChanges)
+        {
+            _dbContext.PlateCorrections.Add(new PlateCorrection
+            {
+                SessionId = sessionId,
+                SessionType = PlateCorrectionSessionType.Recording,
+                Action = PlateCorrectionAction.Reprocessed,
+                UserId = currentUserId,
+                RecorderName = session.RecorderName
+            });
+        }
+
+        session.ReviewedAt = null;
+        session.ReviewedBy = null;
         session.Status = SessionStatus.Processing;
         session.ProcessingError = null;
         await _unit.CompleteAsync();
@@ -205,6 +233,145 @@ public class RecordingSessionService : IRecordingSessionService
 
         _logger.LogInformation("RecordingSession {SessionId} re-queued for processing by user {UserId}", sessionId, currentUserId);
         return ApiResponse<bool>.SuccessResponse(true, "جاري إعادة المعالجة.");
+    }
+
+    public async Task<ApiResponse<AddedSessionPlateDto>> AddPlateAsync(
+        Guid sessionId, Guid currentUserId, AddSessionPlateRequestDto request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.RawPlate))
+            return ApiResponse<AddedSessionPlateDto>.Fail("رقم اللوحة مطلوب.", null, 400);
+
+        var rawPlate = request.RawPlate.Trim();
+        var normalized = PlateNormalizer.Normalize(rawPlate);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return ApiResponse<AddedSessionPlateDto>.Fail("رقم اللوحة غير صالح.", null, 400);
+
+        if (request.AudioOffsetMs is < 0)
+            return ApiResponse<AddedSessionPlateDto>.Fail("مكان اللوحة في الصوت غير صالح.", null, 400);
+
+        if (request.Notes is { Length: > 255 })
+            return ApiResponse<AddedSessionPlateDto>.Fail("الملاحظات طويلة جدًا.", null, 400);
+
+        var session = await _dbContext.RecordingSessions
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
+
+        if (session is null) return ApiResponse<AddedSessionPlateDto>.Fail("التسجيل غير موجود.", null, 404);
+
+        if (session.AudioUrl is null)
+            return ApiResponse<AddedSessionPlateDto>.Fail("التسجيل ده من غير صوت.", null, 400);
+
+        if (session.Status != SessionStatus.Completed)
+            return ApiResponse<AddedSessionPlateDto>.Fail("التسجيل لسه ماخلصش معالجة.", null, 409);
+
+        var match = session.CheckFileId is null
+            ? null
+            : await _dbContext.CheckPlates
+                .AsNoTracking()
+                .Where(cp => cp.CheckFileId == session.CheckFileId.Value && cp.NormalizedPlate == normalized)
+                .Select(cp => new { cp.Id, cp.BankName, cp.VehicleType })
+                .FirstOrDefaultAsync(cancellationToken);
+
+        var lastSequence = await _dbContext.RecordedPlates
+            .Where(p => p.SessionId == sessionId)
+            .MaxAsync(p => (int?)p.SequenceNumber, cancellationToken) ?? 0;
+
+        var vehicleType = PlateCorrectionHelper.Clean(request.VehicleType);
+        var notes = PlateCorrectionHelper.Clean(request.Notes);
+
+        var plate = new RecordedPlate
+        {
+            SessionId = sessionId,
+            UserId = currentUserId,
+            SequenceNumber = lastSequence + 1,
+            RawPlate = rawPlate,
+            NormalizedPlate = normalized,
+            VehicleType = vehicleType,
+            Notes = notes,
+            District = session.District,
+            Street = session.Street,
+            AudioOffsetMs = request.AudioOffsetMs,
+            IsMatched = match is not null,
+            MatchedCheckPlateId = match?.Id,
+            IsManualEntry = true,
+            BankName = match?.BankName,
+            VehicleTypeInCheckFile = match?.VehicleType,
+            RecordedAt = request.AudioOffsetMs.HasValue ? session.StartedAt.AddMilliseconds(request.AudioOffsetMs.Value) : DateTime.UtcNow
+        };
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        session.TotalPlates++;
+        _dbContext.RecordedPlates.Add(plate);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Added directly: ReplaceSessionEntriesAsync would wipe the session's other archive rows and their edits.
+        var archiveRow = new RecordingArchivePlate
+        {
+            UserId = currentUserId,
+            RawPlate = rawPlate,
+            NormalizedPlate = normalized,
+            VehicleType = vehicleType,
+            District = session.District,
+            Street = session.Street,
+            Notes = notes,
+            RecordedAt = plate.RecordedAt,
+            RecorderName = session.RecorderName,
+            SourceSessionId = sessionId,
+            SourceRecordedPlateId = plate.Id,
+            IsMatched = plate.IsMatched
+        };
+        _dbContext.RecordingArchivePlates.Add(archiveRow);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = sessionId,
+            SessionType = PlateCorrectionSessionType.Recording,
+            PlateId = plate.Id,
+            ArchiveRowId = archiveRow.Id,
+            IsManualPlate = true,
+            Action = PlateCorrectionAction.Add,
+            NewPlate = normalized,
+            NewVehicleType = vehicleType,
+            NewNotes = notes,
+            AudioOffsetMs = request.AudioOffsetMs,
+            UserId = currentUserId,
+            RecorderName = session.RecorderName
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("Plate added to RecordingSession {SessionId} by user {UserId}", sessionId, currentUserId);
+        return ApiResponse<AddedSessionPlateDto>.SuccessResponse(
+            new AddedSessionPlateDto(plate.Id, normalized, plate.IsMatched), statusCode: 201);
+    }
+
+    public async Task<ApiResponse<bool>> MarkReviewedAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        var session = await _dbContext.RecordingSessions
+            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
+
+        if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
+
+        if (session.Status != SessionStatus.Completed)
+            return ApiResponse<bool>.Fail("التسجيل لسه ماخلصش معالجة.", null, 409);
+
+        if (session.ReviewedAt is not null) return ApiResponse<bool>.SuccessResponse(true);
+
+        session.ReviewedAt = DateTime.UtcNow;
+        session.ReviewedBy = currentUserId;
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = sessionId,
+            SessionType = PlateCorrectionSessionType.Recording,
+            Action = PlateCorrectionAction.Reviewed,
+            UserId = currentUserId,
+            RecorderName = session.RecorderName
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("RecordingSession {SessionId} marked reviewed by user {UserId}", sessionId, currentUserId);
+        return ApiResponse<bool>.SuccessResponse(true);
     }
 
     public async Task<ApiResponse<bool>> UpdateAsync(
@@ -655,7 +822,7 @@ public class RecordingSessionService : IRecordingSessionService
         var archiveEntry = new RecordingArchiveEntryInput(
             recordedPlate.RawPlate, recordedPlate.NormalizedPlate, recordedPlate.VehicleType,
             recordedPlate.District, recordedPlate.Street, recordedPlate.Notes,
-            LocationLinkHelper.ToGoogleMapsLink(recordedPlate.Location), recordedPlate.RecordedAt, session.RecorderName, recordedPlate.IsMatched);
+            LocationLinkHelper.ToGoogleMapsLink(recordedPlate.Location), recordedPlate.RecordedAt, session.RecorderName, recordedPlate.IsMatched, recordedPlate.Id);
 
         await _archiveService.ReplaceSessionEntriesAsync(session.Id, userId, new List<RecordingArchiveEntryInput> { archiveEntry }, cancellationToken);
 

@@ -51,7 +51,7 @@ public class LiveCheckHub : Hub
         {
 
             var (session, checkFileId) = await _sessionService.CreateSessionAsync(userId, recorderName, district, street, excelSheetName);
-            var aiSession = await _aiConnector.StartSessionAsync(Context.ConnectionAborted);
+            var aiSession = await _aiConnector.StartSessionAsync(session.Id, Context.ConnectionAborted);
             createdSessionId = session.Id;
             var state = new LiveCheckConnectionState
             {
@@ -164,15 +164,16 @@ public class LiveCheckHub : Hub
                     PlateDetectedEvent detected => await sessionService.ProcessDetectionAsync(
                         state.SessionId, state.UserId, state.GroupId, state.CheckFileId, state.District, state.Street,
                         state.LastLatitude, state.LastLongitude,
-                        new AiPlateDetectedEvent(detected.PlateNumber, detected.VehicleType, detected.TimestampMs),
+                        new AiPlateDetectedEvent(detected.PlateNumber, detected.VehicleType, detected.TimestampMs, detected.Notes),
                         Bank.Shared.Enums.CheckType.Live, state.ListenCts.Token),
 
                     PlateCorrectionEvent correction => await sessionService.ProcessCorrectionAsync(
-                        state.SessionId, state.CheckFileId, correction.NewPlateNumber, correction.VehicleType, state.ListenCts.Token),
+                        state.SessionId, state.CheckFileId, correction.NewPlateNumber, correction.VehicleType,
+                        correction.Notes, correction.TimestampMs, state.ListenCts.Token),
 
                     PlateReplacementEvent replacement => await sessionService.ProcessReplacementAsync(
                         state.SessionId, state.CheckFileId, replacement.OldPlateNumber, replacement.NewPlateNumber,
-                        replacement.VehicleType, state.ListenCts.Token),
+                        replacement.VehicleType, replacement.Notes, replacement.TimestampMs, state.ListenCts.Token),
 
                     _ => null
                 };

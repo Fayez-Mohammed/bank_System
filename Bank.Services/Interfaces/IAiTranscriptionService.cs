@@ -3,7 +3,7 @@ namespace Bank.Services.Interfaces;
 public interface IAiTranscriptionService
 {
     Task<AiTranscriptionResult> TranscribeAsync(
-        Stream audioStream, string fileName, string contentType, CancellationToken cancellationToken = default);
+        Stream audioStream, string fileName, string contentType, string? sessionId = null, CancellationToken cancellationToken = default);
 }
 
 // مطابق تمامًا لشكل استجابة الـ AI الحقيقي الجديد

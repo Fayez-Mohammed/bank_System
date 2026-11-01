@@ -22,6 +22,8 @@ public class RecordingArchivePlate : BaseEntityLong
     public string? RecorderName { get; set; }
 
     public Guid? SourceSessionId { get; set; }
+    // Reference only, like SourceSessionId: the AI's row in recorded_plates for this archive row.
+    public long? SourceRecordedPlateId { get; set; }
     public bool IsMatched { get; set; } = false;
 
     // لو الصف ده اتحوّل لملف داتا قبل كده، عشان المرة الجاية نلحق الجديد بس

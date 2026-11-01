@@ -13,7 +13,8 @@ public record RecordingArchiveEntryInput(
     string? LocationLink,
     DateTime RecordedAt,
     string? RecorderName,
-    bool IsMatched);
+    bool IsMatched,
+    long? SourceRecordedPlateId = null);
 
 public interface IRecordingArchiveService
 {

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.LiveCheckDTOs;
+using Bank.Shared.DTOs.TrainingDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -46,6 +47,29 @@ public class CheckSessionsController : ControllerBase
     }
 
     /// <summary>تشيك يدوي — standalone، بيعمل ميني-session لوحده وبيرجّع النتيجة فورًا.</summary>
+    /// <summary>Adds a plate the AI missed to an existing session.</summary>
+    [HttpPost("{sessionId:guid}/plates")]
+    [ProducesResponseType(typeof(ApiResponse<AddedSessionPlateDto>), 201)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 400)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 409)]
+    public async Task<IActionResult> AddPlate(Guid sessionId, [FromBody] AddSessionPlateRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.AddPlateAsync(sessionId, CurrentUserId, request, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>The user checked this session: plates they did not change count as correct.</summary>
+    [HttpPost("{sessionId:guid}/review")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 404)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 409)]
+    public async Task<IActionResult> MarkReviewed(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var result = await _service.MarkReviewedAsync(sessionId, CurrentUserId, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
     [HttpPost("manual-check")]
     [ProducesResponseType(typeof(ApiResponse<ManualLiveCheckResultDto>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 400)]

@@ -9,15 +9,18 @@ public abstract record AiPlateEvent(int TimestampMs);
 public sealed record PlateDetectedEvent(
     string PlateNumber,
     string? VehicleType,
-    int TimestampMs) : AiPlateEvent(TimestampMs);
+    int TimestampMs,
+    string? Notes = null) : AiPlateEvent(TimestampMs);
 
 public sealed record PlateCorrectionEvent(
     string NewPlateNumber,
     string? VehicleType,
-    int TimestampMs) : AiPlateEvent(TimestampMs);
+    int TimestampMs,
+    string? Notes = null) : AiPlateEvent(TimestampMs);
 
 public sealed record PlateReplacementEvent(
     string OldPlateNumber,
     string NewPlateNumber,
     string? VehicleType,
-    int TimestampMs) : AiPlateEvent(TimestampMs);
+    int TimestampMs,
+    string? Notes = null) : AiPlateEvent(TimestampMs);

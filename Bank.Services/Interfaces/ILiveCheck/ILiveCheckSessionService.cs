@@ -1,6 +1,7 @@
 using Bank.DAL.Models.SystemModels;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.LiveCheckDTOs;
+using Bank.Shared.DTOs.TrainingDTOs;
 using Bank.Shared.Enums;
 
 namespace Bank.Services.Interfaces;
@@ -25,14 +26,15 @@ public interface ILiveCheckSessionService
     // القديم). null = مفيش لوحة سابقة في الجلسة يتصحّح عليها (بيتسجّل تحذير
     // في اللوج، مفيش حاجة تترجع للفلاتر).
     Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
-        Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default);
+        Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, string? notes = null, int? timestampMs = null,
+        CancellationToken cancellationToken = default);
 
     // الـ AI بيبعت استبدال برقم اللوحة القديم صراحة — بندوّر عليها جوه نفس
     // الـ Session بس (تحقق أمان: مينفعش يعدّل سجل جلسة تانية). null = مفيش
     // سجل بالرقم القديم ده في الجلسة دي.
     Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
         Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
-        CancellationToken cancellationToken = default);
+        string? notes = null, int? timestampMs = null, CancellationToken cancellationToken = default);
 
     Task CompleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task MarkSessionFailedAsync(Guid sessionId, string error, CancellationToken cancellationToken = default);
@@ -40,6 +42,11 @@ public interface ILiveCheckSessionService
     // ⭐ الميثودز دي REST عادية (تاريخ، نتائج، تصدير، حذف)
     Task<ApiResponse<ManualLiveCheckResultDto>> CreateManualCheckAsync(
         Guid userId, CreateManualLiveCheckRequestDto request, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<AddedSessionPlateDto>> AddPlateAsync(
+        Guid sessionId, Guid userId, AddSessionPlateRequestDto request, CancellationToken cancellationToken = default);
+
+    Task<ApiResponse<bool>> MarkReviewedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
 
     Task<ApiResponse<List<CheckSessionSummaryDto>>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default);
 

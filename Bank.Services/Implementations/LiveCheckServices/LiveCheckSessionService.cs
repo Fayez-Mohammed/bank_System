@@ -6,6 +6,7 @@ using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.LiveCheckDTOs;
+using Bank.Shared.DTOs.TrainingDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         if (recorderName is { Length: > 200 })
             return ApiResponse<bool>.Fail("اسم المسجل طويل جدًا.", null, 400);
 
+        if (request.Notes is { Length: > 500 })
+            return ApiResponse<bool>.Fail("الملاحظات طويلة جدًا.", null, 400);
+
         // الحي والشارع في الجلسة مش nullable، فمينفعش نطبّق قيمة فاضية على الجلسة كلها
         if (request.ApplyDistrictStreetToWholeSession && (district is null || street is null))
             return ApiResponse<bool>.Fail("الحي والشارع مطلوبين لو هتطبّقهم على الجلسة كلها.", null, 400);
@@ -68,6 +72,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
 
         var session = row.CheckSession;
+        var oldNormalizedPlate = row.NormalizedPlate;
+        var oldVehicleType = row.VehicleType;
+        var oldNotes = row.Notes;
 
         // الـ correction/replacement اللحظيين بيشتغلوا على آخر صف في الجلسة، فمنع التعديل أثناء التسجيل
         if (session.Status == SessionStatus.Recording)
@@ -127,7 +134,33 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         row.VehicleType = vehicleType;
         row.District = district;
         row.Street = street;
+        // Older app versions don't send Notes: null keeps the current value.
+        var newNotes = request.Notes is null ? oldNotes : PlateCorrectionHelper.Clean(request.Notes);
+        row.Notes = newNotes;
         if (recorderName is not null) session.RecorderName = recorderName;
+
+        if (normalized != oldNormalizedPlate
+            || !PlateCorrectionHelper.Same(vehicleType, oldVehicleType)
+            || !PlateCorrectionHelper.Same(newNotes, oldNotes))
+        {
+            _dbContext.PlateCorrections.Add(new PlateCorrection
+            {
+                SessionId = session.Id,
+                SessionType = PlateCorrectionSessionType.Live,
+                PlateId = row.Id,
+                IsManualPlate = row.CheckType == CheckType.Manual,
+                Action = PlateCorrectionAction.Edit,
+                OldPlate = oldNormalizedPlate,
+                NewPlate = normalized,
+                OldVehicleType = oldVehicleType,
+                NewVehicleType = vehicleType,
+                OldNotes = oldNotes,
+                NewNotes = newNotes,
+                AudioOffsetMs = row.AudioOffsetMs,
+                UserId = userId,
+                RecorderName = session.RecorderName
+            });
+        }
 
         if (request.ApplyDistrictStreetToWholeSession)
         {
@@ -172,7 +205,17 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Where(l => userScope.GroupId.HasValue
                 ? l.CheckSession.GroupId == userScope.GroupId.Value
                 : l.CheckSession.GroupId == null && l.CheckSession.UserId == userId)
-            .Select(l => new { l.CheckSessionId, l.CheckSession.Status })
+            .Select(l => new
+            {
+                l.CheckSessionId,
+                l.CheckSession.Status,
+                l.CheckSession.RecorderName,
+                l.CheckType,
+                l.NormalizedPlate,
+                l.VehicleType,
+                l.Notes,
+                l.AudioOffsetMs
+            })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (row is null) return ApiResponse<bool>.Fail("الصف غير موجود.", null, 404);
@@ -183,6 +226,22 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         await _dbContext.LiveCheckLogs.Where(l => l.Id == id).ExecuteDeleteAsync(cancellationToken);
+
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = row.CheckSessionId,
+            SessionType = PlateCorrectionSessionType.Live,
+            PlateId = id,
+            IsManualPlate = row.CheckType == CheckType.Manual,
+            Action = PlateCorrectionAction.Delete,
+            OldPlate = row.NormalizedPlate,
+            OldVehicleType = row.VehicleType,
+            OldNotes = row.Notes,
+            AudioOffsetMs = row.AudioOffsetMs,
+            UserId = userId,
+            RecorderName = row.RecorderName
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         var remaining = await _dbContext.LiveCheckLogs
             .CountAsync(l => l.CheckSessionId == row.CheckSessionId, cancellationToken);
@@ -339,6 +398,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             NormalizedPlate = normalized,
             CheckType = checkType,
             VehicleType = detection.VehicleType,
+            Notes = detection.Notes,
+            // A hand-entered plate has no position in the audio unless one was given (> 0); for the AI, 0 is valid.
+            AudioOffsetMs = checkType == CheckType.Live || detection.TimestampMs > 0 ? detection.TimestampMs : null,
             District = district,
             Street = street,
             Location = locationLink,
@@ -365,7 +427,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             log.Location,
             log.CheckedAt,
             bankName,                // 💡 إرجاع اسم البنك
-            vehicleTypeInCheckFile   // 💡 إرجاع نوع السيارة في ملف التشييك
+            vehicleTypeInCheckFile,  // 💡 إرجاع نوع السيارة في ملف التشييك
+            log.Notes
         );
     }
     // الـ AI أحيانًا بيبعت "تصحيح" لآخر لوحة اتسمعت (من غير ما يحدد رقمها القديم —
@@ -373,7 +436,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     // الـ Session (بالـ Id، أضمن من CheckedAt لو فيه تساوي بالميلي ثانية) ونعدّله
     // في مكانه، ونعيد الـ Matching لأن رقم اللوحة اتغيّر.
     public async Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
-    Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, CancellationToken cancellationToken = default)
+    Guid sessionId, Guid? checkFileId, string newPlateNumber, string? vehicleType, string? notes = null, int? timestampMs = null,
+    CancellationToken cancellationToken = default)
     {
         var lastLog = await _dbContext.LiveCheckLogs
             .Where(l => l.CheckSessionId == sessionId)
@@ -417,6 +481,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         lastLog.RawPlate = newPlateNumber;
         lastLog.NormalizedPlate = normalized;
         if (!string.IsNullOrWhiteSpace(vehicleType)) lastLog.VehicleType = vehicleType;
+        if (!string.IsNullOrWhiteSpace(notes)) lastLog.Notes = notes;
+        if (timestampMs.HasValue) lastLog.AudioOffsetMs = timestampMs;
         lastLog.IsMatched = matchedCheckPlateId.HasValue;
         lastLog.MatchedCheckPlateId = matchedCheckPlateId;
         lastLog.BankName = bankName;                             // 💡 تحديث اسم البنك الخاص باللوحة المصححة
@@ -436,7 +502,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             lastLog.Location,
             lastLog.CheckedAt,
             bankName,               // 💡 إرجاع اسم البنك الجديد
-            vehicleTypeInCheckFile  // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+            vehicleTypeInCheckFile, // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+            lastLog.Notes
         );
     }
     //public async Task<LiveCheckPlateResultDto?> ProcessCorrectionAsync(
@@ -487,7 +554,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     // مطابق، بنرفض الطلب ونسجّل تحذير بدل ما نضيف سجل جديد باسم غلط.
     public async Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
     Guid sessionId, Guid? checkFileId, string oldPlateNumber, string newPlateNumber, string? vehicleType,
-    CancellationToken cancellationToken = default)
+    string? notes = null, int? timestampMs = null, CancellationToken cancellationToken = default)
     {
         var oldNormalized = PlateNormalizer.Normalize(oldPlateNumber);
 
@@ -533,6 +600,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
         targetLog.RawPlate = newPlateNumber;
         targetLog.NormalizedPlate = newNormalized;
         if (!string.IsNullOrWhiteSpace(vehicleType)) targetLog.VehicleType = vehicleType;
+        if (!string.IsNullOrWhiteSpace(notes)) targetLog.Notes = notes;
+        if (timestampMs.HasValue) targetLog.AudioOffsetMs = timestampMs;
         targetLog.IsMatched = matchedCheckPlateId.HasValue;
         targetLog.MatchedCheckPlateId = matchedCheckPlateId;
         targetLog.BankName = bankName;                             // 💡 تحديث اسم البنك للوحة الاستبدال
@@ -552,7 +621,8 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             targetLog.Location,
             targetLog.CheckedAt,
             bankName,               // 💡 إرجاع اسم البنك الجديد
-            vehicleTypeInCheckFile  // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+            vehicleTypeInCheckFile, // 💡 إرجاع نوع السيارة في ملف التشييك الجديد
+            targetLog.Notes
         );
     }
     //public async Task<LiveCheckPlateResultDto?> ProcessReplacementAsync(
@@ -653,6 +723,90 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             new ManualLiveCheckResultDto(session.Id, session.DisplayName, plateResult), statusCode: 201);
     }
 
+    public async Task<ApiResponse<AddedSessionPlateDto>> AddPlateAsync(
+        Guid sessionId, Guid userId, AddSessionPlateRequestDto request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.RawPlate))
+            return ApiResponse<AddedSessionPlateDto>.Fail("رقم اللوحة مطلوب.", null, 400);
+
+        var rawPlate = request.RawPlate.Trim();
+        var normalized = PlateNormalizer.Normalize(rawPlate);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return ApiResponse<AddedSessionPlateDto>.Fail("رقم اللوحة غير صالح.", null, 400);
+
+        if (request.AudioOffsetMs is < 0)
+            return ApiResponse<AddedSessionPlateDto>.Fail("مكان اللوحة في الصوت غير صالح.", null, 400);
+
+        if (request.Notes is { Length: > 500 })
+            return ApiResponse<AddedSessionPlateDto>.Fail("الملاحظات طويلة جدًا.", null, 400);
+
+        if (!await EnsureSessionInScopeAsync(sessionId, userId, cancellationToken))
+            return ApiResponse<AddedSessionPlateDto>.Fail("التشييك غير موجود.", null, 404);
+
+        var session = await _dbContext.CheckSessions.AsNoTracking().FirstAsync(s => s.Id == sessionId, cancellationToken);
+
+        if (session.Status == SessionStatus.Recording)
+            return ApiResponse<AddedSessionPlateDto>.Fail("الجلسة لسه شغالة — أوقفها الأول قبل الإضافة.", null, 409);
+
+        var vehicleType = PlateCorrectionHelper.Clean(request.VehicleType);
+        var notes = PlateCorrectionHelper.Clean(request.Notes);
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        var plate = await ProcessDetectionAsync(
+            sessionId, userId, session.GroupId, session.CheckFileId, session.District, session.Street, null, null,
+            new AiPlateDetectedEvent(rawPlate, vehicleType, request.AudioOffsetMs ?? 0, notes), CheckType.Manual, cancellationToken);
+
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = sessionId,
+            SessionType = PlateCorrectionSessionType.Live,
+            PlateId = plate.Id,
+            IsManualPlate = true,
+            Action = PlateCorrectionAction.Add,
+            NewPlate = plate.NormalizedPlate,
+            NewVehicleType = vehicleType,
+            NewNotes = notes,
+            AudioOffsetMs = request.AudioOffsetMs,
+            UserId = userId,
+            RecorderName = session.RecorderName
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("Plate added to CheckSession {SessionId} by user {UserId}", sessionId, userId);
+        return ApiResponse<AddedSessionPlateDto>.SuccessResponse(
+            new AddedSessionPlateDto(plate.Id, plate.NormalizedPlate, plate.IsMatched), statusCode: 201);
+    }
+
+    public async Task<ApiResponse<bool>> MarkReviewedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        if (!await EnsureSessionInScopeAsync(sessionId, userId, cancellationToken))
+            return ApiResponse<bool>.Fail("التشييك غير موجود.", null, 404);
+
+        var session = await _dbContext.CheckSessions.FirstAsync(s => s.Id == sessionId, cancellationToken);
+
+        if (session.Status == SessionStatus.Recording)
+            return ApiResponse<bool>.Fail("الجلسة لسه شغالة — أوقفها الأول قبل المراجعة.", null, 409);
+
+        if (session.ReviewedAt is not null) return ApiResponse<bool>.SuccessResponse(true);
+
+        session.ReviewedAt = DateTime.UtcNow;
+        session.ReviewedBy = userId;
+        _dbContext.PlateCorrections.Add(new PlateCorrection
+        {
+            SessionId = sessionId,
+            SessionType = PlateCorrectionSessionType.Live,
+            Action = PlateCorrectionAction.Reviewed,
+            UserId = userId,
+            RecorderName = session.RecorderName
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("CheckSession {SessionId} marked reviewed by user {UserId}", sessionId, userId);
+        return ApiResponse<bool>.SuccessResponse(true);
+    }
+
     public async Task<ApiResponse<List<CheckSessionSummaryDto>>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var sessions = await _dbContext.CheckSessions
@@ -693,7 +847,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Take(pageSize)
             .Select(l => new LiveCheckLogRowDto(
                 l.Id, l.NormalizedPlate, l.Location, l.CheckedAt, l.District, l.Street,
-                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched))
+                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched, l.Notes))
             .ToListAsync(cancellationToken);
         var result = new PagedResult<LiveCheckLogRowDto>
         {
@@ -919,7 +1073,7 @@ public class LiveCheckSessionService : ILiveCheckSessionService
             .Take(pageSize)
             .Select(l => new LiveCheckLogRowDto(
                 l.Id, l.NormalizedPlate, l.Location, l.CheckedAt, l.District, l.Street,
-                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched))
+                l.CheckSession.RecorderName, l.VehicleType, l.IsMatched, l.Notes))
             .ToListAsync(cancellationToken);
 
         var result = new PagedResult<LiveCheckLogRowDto>

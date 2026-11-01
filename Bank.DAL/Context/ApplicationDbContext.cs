@@ -33,6 +33,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     public DbSet<RecordingArchivePlate> RecordingArchivePlates
     => Set<RecordingArchivePlate>();
  
+    public DbSet<PlateCorrection> PlateCorrections => Set<PlateCorrection>();
     public DbSet<Certificate> Certificates => Set<Certificate>();
     public DbSet<MapResult> MapResults => Set<MapResult>();
     public DbSet<MapUploadedFile> MapUploadedFiles => Set<MapUploadedFile>();

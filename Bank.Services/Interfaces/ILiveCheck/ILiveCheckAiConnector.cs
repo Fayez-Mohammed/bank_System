@@ -6,7 +6,7 @@ namespace Bank.Services.Interfaces;
 /// الجزء الوحيد اللي هيتغيّر لما موديل صاحبك يخلص فعليًا — الـ Hub وباقي
 /// الكود بيتعاملوا مع الـ abstraction ده بس، مش مع تفاصيل WebSocket مباشرة.
 /// </summary>
-public record AiPlateDetectedEvent(string PlateNumber, string? VehicleType, int TimestampMs);
+public record AiPlateDetectedEvent(string PlateNumber, string? VehicleType, int TimestampMs, string? Notes = null);
 
 public interface ILiveCheckAiSession : IAsyncDisposable
 {
@@ -28,5 +28,6 @@ public interface ILiveCheckAiSession : IAsyncDisposable
 
 public interface ILiveCheckAiConnector
 {
-    Task<ILiveCheckAiSession> StartSessionAsync(CancellationToken cancellationToken = default);
+    /// <param name="sessionId">CheckSession id, sent to the AI server so both sides' records can be linked.</param>
+    Task<ILiveCheckAiSession> StartSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
 }

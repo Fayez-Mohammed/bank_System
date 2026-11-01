@@ -34,16 +34,20 @@ public class WebSocketLiveCheckAiConnector : ILiveCheckAiConnector
         _loggerFactory = loggerFactory;
     }
 
-    public async Task<ILiveCheckAiSession> StartSessionAsync(CancellationToken cancellationToken = default)
+    public async Task<ILiveCheckAiSession> StartSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         var url = _configuration["LiveCheckAi:WebSocketUrl"]
             ?? throw new InvalidOperationException("LiveCheckAi:WebSocketUrl مش متظبطة في appsettings.");
 
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri(url), cancellationToken);
+        await socket.ConnectAsync(new Uri(AddSessionId(url, sessionId)), cancellationToken);
 
         return new WebSocketLiveCheckAiSession(socket, _loggerFactory.CreateLogger<WebSocketLiveCheckAiSession>());
     }
+
+    // The configured URL may already carry a query (?token=...).
+    private static string AddSessionId(string url, Guid sessionId)
+        => $"{url}{(url.Contains('?') ? '&' : '?')}session={sessionId}";
 }
 
 public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
@@ -127,21 +131,21 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
                 case "plate_detected":
                     if (!string.IsNullOrWhiteSpace(message.PlateNumber))
                     {
-                        yield return new PlateDetectedEvent(message.PlateNumber, message.VehicleType, timestamp);
+                        yield return new PlateDetectedEvent(message.PlateNumber, message.VehicleType, timestamp, message.Notes);
                     }
                     break;
 
                 case "plate_correction":
                     if (!string.IsNullOrWhiteSpace(message.NewPlateNumber))
                     {
-                        yield return new PlateCorrectionEvent(message.NewPlateNumber, message.VehicleType, timestamp);
+                        yield return new PlateCorrectionEvent(message.NewPlateNumber, message.VehicleType, timestamp, message.Notes);
                     }
                     break;
 
                 case "plate_replacement":
                     if (!string.IsNullOrWhiteSpace(message.OldPlateNumber) && !string.IsNullOrWhiteSpace(message.NewPlateNumber))
                     {
-                        yield return new PlateReplacementEvent(message.OldPlateNumber, message.NewPlateNumber, message.VehicleType, timestamp);
+                        yield return new PlateReplacementEvent(message.OldPlateNumber, message.NewPlateNumber, message.VehicleType, timestamp, message.Notes);
                     }
                     break;
 
@@ -181,6 +185,7 @@ public class WebSocketLiveCheckAiSession : ILiveCheckAiSession
         [property: JsonPropertyName("new_plate_number")] string? NewPlateNumber,
         [property: JsonPropertyName("old_plate_number")] string? OldPlateNumber,
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
+        [property: JsonPropertyName("notes")] string? Notes,
         [property: JsonPropertyName("timestamp_ms")] int? TimestampMs,
         [property: JsonPropertyName("message")] string? Message);
 }

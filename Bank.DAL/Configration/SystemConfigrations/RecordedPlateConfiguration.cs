@@ -24,6 +24,8 @@ public class RecordedPlateConfiguration : BaseEntityLongConfiguration<RecordedPl
         builder.Property(x => x.District).HasColumnName("district").HasMaxLength(150);
         builder.Property(x => x.Location).HasColumnName("location").HasColumnType("geography");
         builder.Property(x => x.AudioOffsetMs).HasColumnName("audio_offset_ms");
+        builder.Property(x => x.AudioStartMs).HasColumnName("audio_start_ms");
+        builder.Property(x => x.AudioEndMs).HasColumnName("audio_end_ms");
         builder.Property(x => x.IsMatched).HasColumnName("is_matched").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.MatchedCheckPlateId).HasColumnName("matched_check_plate_id");
         builder.Property(x => x.IsManualEntry).HasColumnName("is_manual_entry").HasDefaultValue(false).IsRequired();

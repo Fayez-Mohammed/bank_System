@@ -69,6 +69,8 @@ services:
       AiService__BaseUrl: ${AI_BASE_URL:-http://host.docker.internal:8000}
       AiService__ApiKey: ${AI_API_KEY:-}
       LiveCheckAi__WebSocketUrl: ${AI_WS_URL:-ws://host.docker.internal:8000/ws/live-check}
+      # Key the AI server uses to read GET /api/training/corrections. Empty = that endpoint stays closed.
+      Training__ApiKey: ${TRAINING_API_KEY:-}
      
 
 

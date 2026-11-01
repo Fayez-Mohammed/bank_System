@@ -28,6 +28,8 @@ public class LiveCheckLogConfiguration : BaseEntityLongConfiguration<LiveCheckLo
             .IsRequired();
 
         builder.Property(x => x.VehicleType).HasColumnName("vehicle_type").HasMaxLength(100);
+        builder.Property(x => x.Notes).HasColumnName("notes").HasMaxLength(500);
+        builder.Property(x => x.AudioOffsetMs).HasColumnName("audio_offset_ms");
         builder.Property(x => x.District).HasColumnName("district").HasMaxLength(150);
         builder.Property(x => x.Street).HasColumnName("street").HasMaxLength(150);
         builder.Property(x => x.Location).HasColumnName("location").HasMaxLength(500);

@@ -191,14 +191,18 @@ public class AiTranscriptionService : IAiTranscriptionService
     }
 
     public async Task<AiTranscriptionResult> TranscribeAsync(
-        Stream audioStream, string fileName, string contentType, CancellationToken cancellationToken = default)
+        Stream audioStream, string fileName, string contentType, string? sessionId = null, CancellationToken cancellationToken = default)
     {
         using var content = new MultipartFormDataContent();
         using var streamContent = new StreamContent(audioStream);
         streamContent.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
         content.Add(streamContent, "file", fileName);
 
-        var response = await _httpClient.PostAsync("/api/v1/process", content, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/process") { Content = content };
+        if (!string.IsNullOrWhiteSpace(sessionId))
+            request.Headers.Add("X-Session-Id", sessionId);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
