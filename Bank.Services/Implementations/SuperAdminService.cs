@@ -5,11 +5,16 @@ using Bank.Repo.Interfaces;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AdminDTOs;
+using Bank.Shared.DTOs.SubscriptionDTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.Enums;
+using DocumentFormat.OpenXml.Spreadsheet;
+using Google.Apis.Drive.v3.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -23,19 +28,61 @@ namespace Bank.Services.Implementations
         private readonly AppDbContext _context;
         private readonly IUserService _userService;
         private readonly ILogger<SuperAdminService> _logger;
+
+        private readonly IMemoryCache _cache;
+
         public SuperAdminService(
             IUnitOfWork unitOfWork,
             AppDbContext context,
             IUserService userService,
-            ILogger<SuperAdminService> logger)
+            ILogger<SuperAdminService> logger,
+            IMemoryCache cache)
         {
             _unitOfWork = unitOfWork;
             _context = context;
             _logger = logger;
             _userService = userService;
+            _cache = cache;
         }
+        public async Task<ApiResponse<DateTime?>> SetUserSubscriptionAsync(
+    Guid userId, SetUserSubscriptionDto dto, CancellationToken ct = default)
+        {
+            var modes = (dto.Months.HasValue ? 1 : 0) + (dto.ExpiresAt.HasValue ? 1 : 0) + (dto.Unlimited ? 1 : 0);
+            if (modes != 1)
+                return ApiResponse<DateTime?>.Fail("حدد واحد بس: Months أو ExpiresAt أو Unlimited.");
+            if (dto.Months is <= 0 or > 60)
+                return ApiResponse<DateTime?>.Fail("عدد الشهور لازم يكون من 1 لـ 60.");
 
-    //Admins
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.Role != UserRole.SuperAdmin, ct);
+            if (user is null) return ApiResponse<DateTime?>.Fail("المستخدم غير موجود.", null, 404);
+
+            var now = DateTime.UtcNow;
+            DateTime? newExpiry;
+
+            if (dto.Unlimited)
+            {
+                newExpiry = null;
+            }
+            else if (dto.Months.HasValue)
+            {
+                var from = user.SubscriptionExpiresAt is { } current && current > now ? current : now;
+                newExpiry = from.AddMonths(dto.Months.Value);
+            }
+            else
+            {
+                var e = dto.ExpiresAt!.Value;
+                newExpiry = e.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(e, DateTimeKind.Utc) : e.ToUniversalTime();
+                if (newExpiry <= now) return ApiResponse<DateTime?>.Fail("تاريخ الانتهاء لازم يكون في المستقبل.");
+            }
+
+            user.SubscriptionExpiresAt = newExpiry;
+            user.ExpiryReminderStage = 0;      // التجديد يرجّع التنبيهات من الأول
+            await _context.SaveChangesAsync(ct);
+
+            _logger.LogInformation("Subscription for user {UserId} set to {ExpiresAt}", userId, newExpiry);
+            return ApiResponse<DateTime?>.SuccessResponse(newExpiry, "تم تحديث الاشتراك.");
+        }
+        //Admins
         public async Task<ApiResponse<AdminResponseDto>> CreateAdminAsync(CreateAdminDto dto, CancellationToken ct = default)
         {
             if (await _userService.GetByEmailAsync(dto.Email) is not null)
@@ -184,8 +231,21 @@ namespace Bank.Services.Implementations
                 _logger.LogWarning("SetAdminActiveStatus failed: {AdminId} not found", adminId);
                 return ApiResponse<bool>.Fail("Admin not found.", null, 404);
             }
-
             admin.IsActive = !admin.IsActive;
+            _cache.Remove($"user-active:{adminId}");
+            if (!admin.IsActive)
+            {
+                var refreshTokens = await _context.RefreshTokens
+                    .Where(r => r.UserId == adminId)
+                    .ToListAsync(ct);
+
+                if (refreshTokens.Any())
+                {
+                    _context.RefreshTokens.RemoveRange(refreshTokens);
+                }
+
+                //  await DisconnectUserLiveCheckSessionsAsync(userId);
+            }
             await _unitOfWork.CompleteAsync();
 
             _logger.LogInformation("Admin {AdminId} active status set to {IsActive}", adminId, admin.IsActive);
@@ -222,7 +282,7 @@ namespace Bank.Services.Implementations
                 CreatedAt = DateTime.UtcNow
             };
 
-            await _unitOfWork.Repository<Group>().AddAsync(group);
+            await _unitOfWork.Repository<Bank.DAL.Models.SystemModels.Group>().AddAsync(group);
             await _unitOfWork.CompleteAsync();
 
             _logger.LogInformation("Group {GroupId} ({GroupName}) created with Admin {AdminId}", group.Id, group.Name, group.AdminId);
@@ -303,7 +363,7 @@ namespace Bank.Services.Implementations
 
         public async Task<ApiResponse<GroupResponseDto>> UpdateGroupAsync(Guid groupId, UpdateGroupDto dto, CancellationToken ct = default)
         {
-            var repo = _unitOfWork.Repository<Group>();
+            var repo = _unitOfWork.Repository<Bank.DAL.Models.SystemModels.Group>();
             var group = await repo.GetByIdAsync(groupId);
             if (group is null)
             {
@@ -321,7 +381,7 @@ namespace Bank.Services.Implementations
 
         public async Task<ApiResponse<bool>> SetGroupToggleActiveStatusAsync(Guid groupId, CancellationToken ct = default)
         {
-            var repo = _unitOfWork.Repository<Group>();
+            var repo = _unitOfWork.Repository<Bank.DAL.Models.SystemModels.Group>();
             var group = await repo.GetByIdAsync(groupId);
             if (group is null)
             {
@@ -338,7 +398,7 @@ namespace Bank.Services.Implementations
 
         public async Task<ApiResponse<GroupResponseDto>> AssignAdminToGroupAsync(Guid groupId, AssignAdminToGroupDto dto, CancellationToken ct = default)
         {
-            var group = await _unitOfWork.Repository<Group>().GetByIdAsync(groupId);
+            var group = await _unitOfWork.Repository<Bank.DAL.Models.SystemModels.Group>().GetByIdAsync(groupId);
             if (group is null)
             {
                 _logger.LogWarning("AssignAdminToGroup failed: Group {GroupId} not found", groupId);
@@ -356,7 +416,7 @@ namespace Bank.Services.Implementations
 
             var previousAdminId = group.AdminId;
             group.AdminId = dto.AdminId;
-           await _unitOfWork.Repository<Group>().UpdateAsync(group);
+           await _unitOfWork.Repository<Bank.DAL.Models.SystemModels.Group>().UpdateAsync(group);
             await _unitOfWork.CompleteAsync();
 
             _logger.LogInformation("Group {GroupId} admin changed from {OldAdminId} to {NewAdminId}", groupId, previousAdminId, dto.AdminId);
@@ -561,6 +621,7 @@ namespace Bank.Services.Implementations
 
             // 1. عكس حالة الـ Active
             user.IsActive = !user.IsActive;
+            _cache.Remove($"user-active:{userId}");
 
             if (!user.IsActive)
             {

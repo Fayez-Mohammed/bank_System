@@ -1,5 +1,6 @@
 ﻿using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
+using Bank.Shared.DTOs.SubscriptionDTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -25,7 +26,15 @@ public class SuperAdminAdminsController : ControllerBase
         _authService = authService;
     }
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-
+    /// <summary>Sets or extends a user's subscription (months, exact date, or unlimited).</summary>
+    [HttpPut("{id:guid}/subscription")]
+    [ProducesResponseType(typeof(ApiResponse<DateTime?>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetUserSubscription(Guid id, [FromBody] SetUserSubscriptionDto dto, CancellationToken cancellationToken)
+    {
+        var result = await _superAdminService.SetUserSubscriptionAsync(id, dto, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
     [HttpPost("{id:guid}/reset-device")]
     [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

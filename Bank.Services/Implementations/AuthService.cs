@@ -137,9 +137,24 @@ namespace Bank.Services.Implementations
         {
             var tokenHash = Sha256Hex(request.RefreshToken.Trim());
 
+            var userId = await _db.RefreshTokens
+                .Where(t => t.Token == tokenHash)
+                .Select(t => (Guid?)t.UserId)
+                .FirstOrDefaultAsync(ct);
+
             await _db.RefreshTokens
                 .Where(t => t.Token == tokenHash && !t.IsRevoked)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsRevoked, true), ct);
+
+            // الإشعارات ماتفضلش توصل للجهاز بعد الخروج
+            if (userId.HasValue)
+            {
+                await _db.Users
+                    .Where(u => u.Id == userId.Value)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(u => u.FcmToken, (string?)null)
+                        .SetProperty(u => u.FcmTokenUpdatedAt, (DateTime?)null), ct);
+            }
 
             return ApiResponse<bool>.SuccessResponse(true, "تم تسجيل الخروج.");
         }
@@ -175,10 +190,16 @@ namespace Bank.Services.Implementations
                 return ApiResponse<bool>.Fail("غير مسموح.", null, 403);
             }
 
+            //var affected = await targets.ExecuteUpdateAsync(s => s
+            //    .SetProperty(u => u.BoundDeviceHash, (string?)null)
+            //    .SetProperty(u => u.BoundDeviceName, (string?)null)
+            //    .SetProperty(u => u.DeviceBoundAt, (DateTime?)null), ct);
             var affected = await targets.ExecuteUpdateAsync(s => s
-                .SetProperty(u => u.BoundDeviceHash, (string?)null)
-                .SetProperty(u => u.BoundDeviceName, (string?)null)
-                .SetProperty(u => u.DeviceBoundAt, (DateTime?)null), ct);
+                    .SetProperty(u => u.BoundDeviceHash, (string?)null)
+                    .SetProperty(u => u.BoundDeviceName, (string?)null)
+                    .SetProperty(u => u.DeviceBoundAt, (DateTime?)null)
+                    .SetProperty(u => u.FcmToken, (string?)null)
+                    .SetProperty(u => u.FcmTokenUpdatedAt, (DateTime?)null), ct);
             if (affected == 0)
                 return ApiResponse<bool>.Fail("المستخدم غير موجود.", null, 404);
 
@@ -261,7 +282,9 @@ namespace Bank.Services.Implementations
                 {
                     Id = user.Id.ToString(),
                     FullName = user.FullName,
-                    Role = user.Role.ToString()
+                    Role = user.Role.ToString(),
+                    SubscriptionExpiresAt = user.SubscriptionExpiresAt
+
                 }
             };
         }

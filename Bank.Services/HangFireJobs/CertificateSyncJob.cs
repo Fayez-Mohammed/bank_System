@@ -1,4 +1,3 @@
-using System.Globalization;
 using Bank.DAL.Context;
 using Bank.DAL.Models.SystemModels;
 using Bank.Services.Helpers;
@@ -8,6 +7,7 @@ using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 
 namespace Bank.Services.HangFireJobs;
 

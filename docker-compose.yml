@@ -53,6 +53,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Firebase__CredentialsPath: /run/secrets/firebase.json
+
       # Trust X-Forwarded-* headers from Nginx/Caddy sitting in front of the app.
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
 
@@ -79,6 +81,7 @@ services:
     volumes:
       - storage:/data/storage
       - ./Logs:/app/Logs
+      - /etc/bank-system/firebase.json:/run/secrets/firebase.json:ro
     ports:
       # Bind to localhost only; put Nginx/Caddy in front for TLS.
       # Change to "${API_BIND:-127.0.0.1}:8080:8080" to make the host configurable.

@@ -66,6 +66,21 @@ namespace Bank.DAL.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<int>("ExpiryReminderStage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("expiry_reminder_stage");
+
+                    b.Property<string>("FcmToken")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("fcm_token");
+
+                    b.Property<DateTime?>("FcmTokenUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fcm_token_updated_at");
+
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -115,6 +130,10 @@ namespace Bank.DAL.Migrations
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("SubscriptionExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("subscription_expires_at");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("boolean");
 
@@ -125,6 +144,10 @@ namespace Bank.DAL.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FcmToken")
+                        .IsUnique()
+                        .HasFilter("fcm_token IS NOT NULL");
+
                     b.HasIndex("GroupId");
 
                     b.HasIndex("NormalizedEmail")
@@ -133,6 +156,8 @@ namespace Bank.DAL.Migrations
                     b.HasIndex("NormalizedUserName")
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
+
+                    b.HasIndex("SubscriptionExpiresAt");
 
                     b.ToTable("users", (string)null);
                 });

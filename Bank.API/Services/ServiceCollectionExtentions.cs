@@ -14,12 +14,14 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
 namespace Bank.API.Services
@@ -116,6 +118,10 @@ namespace Bank.API.Services
             services.AddSingleton<IMemberLocationManager, MemberLocationManager>();
             services.AddScoped<IMemberLocationService, MemberLocationService>();
             services.AddSingleton<IMemberLocationRequestSender, SignalRMemberLocationRequestSender>();
+            //notfications 
+         
+
+
             // لو مش مسجّل بالفعل من الباتش اللي فات (استخراج الإحداثيات):
             services.AddHttpClient("MapsLinkResolver", client => client.Timeout = TimeSpan.FromSeconds(5))
                 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
@@ -222,6 +228,30 @@ namespace Bank.API.Services
                         }
 
                         return Task.CompletedTask;
+                    },
+                    OnTokenValidated = async context =>
+                    {
+                        if (!Guid.TryParse(context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+                        {
+                            context.Fail("Invalid token.");
+                            return;
+                        }
+
+                        var services = context.HttpContext.RequestServices;
+                        var cache = services.GetRequiredService<IMemoryCache>();
+
+                        // الـ cache بيوفّر query على كل request (60 ثانية)، والـ toggle بيمسحه فالإيقاف بيسري فورًا
+                        var isActive = await cache.GetOrCreateAsync($"user-active:{userId}", async entry =>
+                        {
+                            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
+                            var db = services.GetRequiredService<AppDbContext>();
+                            return await db.Users.AsNoTracking()
+                                .Where(u => u.Id == userId)
+                                .Select(u => u.IsActive)
+                                .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+                        });
+
+                        if (!isActive) context.Fail("Account disabled.");
                     }
                 };
             });

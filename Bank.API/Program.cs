@@ -1,5 +1,4 @@
 using Bank.API.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Bank.API.Filters;
 using Bank.API.Hubs;
 using Bank.API.MiddleWare;
@@ -9,14 +8,21 @@ using Bank.DAL.Data;
 using Bank.DAL.Models.BaseModels;
 using Bank.Services.AssemblyMarker;
 using Bank.Services.HangFireJobs;
+using Bank.Services.Implementations;
+using Bank.Services.Interfaces;
+using DocumentFormat.OpenXml.Office2016.Drawing.ChartDrawing;
+using FirebaseAdmin;
+using FirebaseAdmin;
+using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2;
 using Hangfire;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
-using System.Text;
-
 using Serilog;
 using Serilog.Events;
+using System.Text;
 namespace Bank
 {
     public class Program
@@ -49,7 +55,33 @@ namespace Bank
         .CreateLogger();
 
             builder.Host.UseSerilog();
+            //
 
+
+            // Firebase
+            GoogleCredential? firebaseCredential = null;
+            var firebaseJson = builder.Configuration["Firebase:CredentialsJson"];
+            var firebasePath = builder.Configuration["Firebase:CredentialsPath"];
+
+            if (!string.IsNullOrWhiteSpace(firebaseJson))
+                firebaseCredential = GoogleCredential.FromJson(firebaseJson);
+            else if (!string.IsNullOrWhiteSpace(firebasePath) && File.Exists(firebasePath))
+                firebaseCredential = GoogleCredential.FromFile(firebasePath);
+
+            if (firebaseCredential is not null)
+            {
+                FirebaseApp.Create(new AppOptions { Credential = firebaseCredential });
+                builder.Services.AddScoped<IUserNotifier, FcmUserNotifier>();
+            }
+            else
+            {
+                // من غير credentials (مثلًا جهاز مطوّر تاني) بنكتفي باللوج
+                builder.Services.AddScoped<IUserNotifier, LogOnlyUserNotifier>();
+            }
+
+            builder.Services.AddScoped<IDeviceTokenService, DeviceTokenService>();
+            builder.Services.AddScoped<SubscriptionExpiryJob>();
+            //
 
             builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
             {
@@ -120,6 +152,10 @@ namespace Bank
                 "certificate-sync",
                 job => job.SyncAsync(CancellationToken.None),
                 app.Configuration["Certificates:SyncCron"] ?? "0 * * * *");
+            RecurringJob.AddOrUpdate<SubscriptionExpiryJob>(
+                "subscription-expiry-warning",
+                job => job.RunAsync(CancellationToken.None),
+                Cron.Hourly);
             app.MapHub<LiveCheckHub>("/hubs/live-check");
             app.MapHub<MemberLocationHub>("/hubs/member-location");
 

@@ -14,7 +14,11 @@ public class ApplicationUser : IdentityUser<Guid>
     public string? BoundDeviceHash { get; set; }
     public string? BoundDeviceName { get; set; }
     public DateTime? DeviceBoundAt { get; set; }
+    public DateTime? SubscriptionExpiresAt { get; set; }   // UTC — null = غير محدود
+    public int ExpiryReminderStage { get; set; }           // 0..5 = عدد التنبيهات اللي اتبعتت للاشتراك الحالي
 
+    public string? FcmToken { get; set; }
+    public DateTime? FcmTokenUpdatedAt { get; set; }
     public Guid? GroupId { get; set; }
     public virtual Group? Group { get; set; }
 

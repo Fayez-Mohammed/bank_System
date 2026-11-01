@@ -1,4 +1,5 @@
 using Bank.Shared.DTOs;
+using Bank.Shared.DTOs.SubscriptionDTOs;
 using Bank.Shared.DTOs.SuperAdminDTOs;
 
 public interface ISuperAdminService
@@ -26,4 +27,6 @@ public interface ISuperAdminService
     Task<ApiResponse<bool>> SetUserToggleActiveStatusAsync(Guid userId, CancellationToken ct = default);
     Task<ApiResponse<UserResponseDto>> AssignUserToGroupAsync(Guid userId, AssignUserToGroupDto dto, CancellationToken ct = default);
     Task<ApiResponse<UserResponseDto>> RemoveUserFromGroupAsync(Guid userId, CancellationToken ct = default);
+    Task<ApiResponse<DateTime?>> SetUserSubscriptionAsync(Guid userId, SetUserSubscriptionDto dto, CancellationToken ct = default);
+
 }

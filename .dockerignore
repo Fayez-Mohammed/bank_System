@@ -22,3 +22,4 @@
 Dockerfile
 docker-compose*.yml
 .dockerignore
+*firebase-adminsdk*.json

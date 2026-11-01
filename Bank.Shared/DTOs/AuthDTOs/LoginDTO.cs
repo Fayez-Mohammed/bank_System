@@ -44,7 +44,7 @@ namespace Bank.Shared.DTOs.AuthDTOs
      public string Id { get; set; }
      public string FullName { get; set; }
      public string Role { get; set; }
-
+     public DateTime? SubscriptionExpiresAt { get; set; }
     }
 }
 
