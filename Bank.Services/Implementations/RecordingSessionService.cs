@@ -386,6 +386,8 @@ public class RecordingSessionService : IRecordingSessionService
         sheet.Cell(1, 8).Value = "اسم المسجّل";
 
         var r = 2;
+        sheet.Column(6).Style.DateFormat.Format = "yyyy-MM-dd HH:mm:ss";
+        sheet.Columns().AdjustToContents();
         foreach (var row in rows)
         {
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
@@ -394,6 +396,7 @@ public class RecordingSessionService : IRecordingSessionService
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
             sheet.Cell(r, 6).Value = row.RecordedAt;
+
             // sheet.Cell(r, 7).Value = LocationLinkHelper.ToGoogleMapsLink(row.Location);
             var locCell = sheet.Cell(r, 7);
             var locLink = LocationLinkHelper.ToGoogleMapsLink(row.Location);
