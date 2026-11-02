@@ -524,6 +524,8 @@ namespace Bank.Services.Implementations
                     CreatedAt = u.CreatedAt,
                     GroupId = u.GroupId,
                     GroupName = u.Group != null ? u.Group.Name : null,
+                    SubscriptionExpiresAt = u.SubscriptionExpiresAt,
+
                     Permissions = _context.UserPermissions
                     .Where(p => p.UserId == u.Id)
                     .Select(p => new UserPermissionDto
