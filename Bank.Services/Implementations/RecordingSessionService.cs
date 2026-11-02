@@ -395,7 +395,7 @@ public class RecordingSessionService : IRecordingSessionService
             sheet.Cell(r, 3).Value = row.VehicleType;
             sheet.Cell(r, 4).Value = row.Street;
             sheet.Cell(r, 5).Value = row.District;
-            sheet.Cell(r, 6).Value = row.RecordedAt;
+            sheet.Cell(r, 6).Value = row.RecordedAt.ToSaudiLocalTime();
 
             // sheet.Cell(r, 7).Value = LocationLinkHelper.ToGoogleMapsLink(row.Location);
             var locCell = sheet.Cell(r, 7);
