@@ -140,7 +140,10 @@ namespace Bank.Services.Implementations
 
             var totalCount = await query.CountAsync(ct);
             var items = await query
-                .OrderByDescending(u => u.CreatedAt)
+                               // .OrderByDescending(u => u.CreatedAt)
+                 .OrderBy(u => u.SubscriptionExpiresAt == null)
+                .ThenBy(u => u.SubscriptionExpiresAt)
+                .ThenByDescending(u => u.CreatedAt)
                 .Skip((pagination.PageNumber - 1) * pagination.PageSize)
                 .Take(pagination.PageSize)
                 .Select(u => new AdminResponseDto
@@ -150,6 +153,7 @@ namespace Bank.Services.Implementations
                     Email = u.Email!,
                     IsActive = u.IsActive,
                     CreatedAt = u.CreatedAt,
+                    SubscriptionExpiresAt = u.SubscriptionExpiresAt,
                     AdministeredGroupId = u.AdministeredGroup != null ? u.AdministeredGroup.Id : (Guid?)null,
                     AdministeredGroupName = u.AdministeredGroup != null ? u.AdministeredGroup.Name : null
                 })
@@ -512,7 +516,10 @@ namespace Bank.Services.Implementations
             var totalCount = await query.CountAsync(ct);
 
             var items = await query
-                .OrderByDescending(u => u.CreatedAt)
+                //.OrderByDescending(u => u.CreatedAt)
+                .OrderBy(u => u.SubscriptionExpiresAt == null)
+                .ThenBy(u => u.SubscriptionExpiresAt)
+                .ThenByDescending(u => u.CreatedAt)
                 .Skip((pagination.PageNumber - 1) * pagination.PageSize)
                 .Take(pagination.PageSize)
                 .Select(u => new UserResponseDto

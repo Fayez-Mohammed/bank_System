@@ -41,6 +41,7 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         // The group this admin currently administers, if any (Group.AdminId == this.Id)
         public Guid? AdministeredGroupId { get; set; }
         public string? AdministeredGroupName { get; set; }
+        public DateTime? SubscriptionExpiresAt { get; set; }
     }
 
 }
