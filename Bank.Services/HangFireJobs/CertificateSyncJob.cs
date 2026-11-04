@@ -19,7 +19,7 @@ namespace Bank.Services.HangFireJobs;
 [Queue("certificates")]
 public class CertificateSyncJob
 {
-    private const int InsertChunkSize = 500;
+    private const int InsertChunkSize = 50;
 
     private readonly AppDbContext _db;
     private readonly IGoogleDriveClient _drive;

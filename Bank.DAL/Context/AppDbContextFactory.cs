@@ -13,7 +13,7 @@ namespace Bank.DAL.Context;
 public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {
     private const string DefaultConnection =
-        "Host=localhost;Port=5432;Database=bank_system_v2;Username=postgres;Password=kbK7IH8fNrfd4MOCrgIub8yWRvlKEtLPfCnsv5MKsFynLpgc";
+        "Host=localhost;Port=5432;Database=bank_system;Username=postgres;Password=fa1f7e9a6f65b77406e755396d660a14798dec4d206f7eed";
 
     public AppDbContext CreateDbContext(string[] args)
     {

@@ -180,7 +180,9 @@ public sealed class GoogleDriveClient : IGoogleDriveClient
             }
 
             const string fields = "nextPageToken, files(id, name, mimeType, createdTime, shortcutDetails(targetId, targetMimeType))";
-
+            // وضع تجربة: لو Certificates:SyncTestMaxFiles = 5، الزحف بيقف أول ما يلاقي 5 ملفات
+            var testLimit =  int.TryParse(_configuration["Certificates:SyncTestMaxFiles"], out var tl) && tl > 0 ? tl : 0;
+            bool LimitReached() => testLimit > 0 && files.Count >= testLimit;
             // 1) الأصناف المشتركة مباشرة مع الحساب (مجلدات وملفات)
             string? pageToken = null;
             do
@@ -197,10 +199,10 @@ public sealed class GoogleDriveClient : IGoogleDriveClient
                 var resp = await req.ExecuteAsync(ct);
                 Collect(resp.Files);
                 pageToken = resp.NextPageToken;
-            } while (pageToken != null);
+            } while (pageToken != null && !LimitReached());
 
             // 2) الزحف على كل المجلدات (BFS)
-            while (folderQueue.Count > 0)
+            while (folderQueue.Count > 0 && !LimitReached())
             {
                 var folderId = folderQueue.Dequeue();
                 if (!visitedFolders.Add(folderId)) continue;
@@ -220,9 +222,16 @@ public sealed class GoogleDriveClient : IGoogleDriveClient
                     var resp = await req.ExecuteAsync(ct);
                     Collect(resp.Files);
                     pageToken = resp.NextPageToken;
-                } while (pageToken != null);
+                } while (pageToken != null && !LimitReached());
             }
-
+            if (testLimit > 0)
+            {
+                _logger.LogWarning(
+                    "Certificate sync TEST MODE: limited to {Limit} file(s). Remove Certificates:SyncTestMaxFiles for a full sync.",
+                    testLimit);
+                if (files.Count > testLimit) files.RemoveRange(testLimit, files.Count - testLimit);
+            }
+            return files;
             return files;
         });
 
