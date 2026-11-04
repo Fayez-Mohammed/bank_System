@@ -38,7 +38,7 @@ public class RecordingProcessingJob
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
             .Where(s => s.Id == sessionId)
-            .Select(s => new { s.StartedAt, s.CheckFileId, s.AudioUrl, s.UserId, s.District, s.Street,s.RecorderName })
+            .Select(s => new { s.StartedAt, s.CheckFileId, s.AudioUrl, s.UserId, s.District, s.Street,s.RecorderName,s.DisplayName })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null || session.AudioUrl is null)
@@ -141,7 +141,7 @@ public class RecordingProcessingJob
             //    .FirstOrDefaultAsync(cancellationToken);
 
             var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
-                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District, session.Street, p.Notes,
+                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District,session.DisplayName/* session.Street*/, p.Notes,
                 LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched)).ToList();
 
             await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);

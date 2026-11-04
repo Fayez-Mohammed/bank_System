@@ -20,7 +20,7 @@ public class RecordingArchivePlate : BaseEntityLong
     public string? Location { get; set; }
     public DateTime RecordedAt { get; set; }
     public string? RecorderName { get; set; }
-
+    //public string? DisplayName { get; set; } // اسم السيشن وقت التفريغ، عشان نعرفه بعدين لو السيشن اتحذف
     public Guid? SourceSessionId { get; set; }
     public bool IsMatched { get; set; } = false;
 

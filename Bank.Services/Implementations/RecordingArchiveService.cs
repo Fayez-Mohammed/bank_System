@@ -185,6 +185,7 @@ public class RecordingArchiveService : IRecordingArchiveService
     public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
     Guid currentUserId, string? fileName, CancellationToken cancellationToken = default)
     {
+     
         var rows = await _dbContext.RecordingArchivePlates
             .AsNoTracking()
             .Where(a => a.UserId == currentUserId)
@@ -198,6 +199,7 @@ public class RecordingArchiveService : IRecordingArchiveService
                 a.RecordedAt,
                 a.District,
                 a.Street,
+                
                 a.Notes,
                 a.VehicleType,
                 a.RecorderName
