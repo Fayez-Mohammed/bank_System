@@ -484,6 +484,17 @@ public class ReferralJobService : IReferralJobService
         }
 
         await importer.CompleteAsync(cancellationToken);
+        try
+        {
+            await using var analyze = connection.CreateCommand();
+            analyze.CommandText = "ANALYZE referral_plates;";
+            analyze.CommandTimeout = 300;
+            await analyze.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ANALYZE referral_plates failed");
+        }
     }
 
     public async Task<ApiResponse<ReferralJobStatusDto>> GetStatusAsync(
@@ -1091,8 +1102,16 @@ public class ReferralJobService : IReferralJobService
                         cell.Style.Font.FontColor = XLColor.FromHtml("#0563C1");
                         cell.Style.Font.Underline = XLFontUnderlineValues.Single;
                         cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        cell.Style.Alignment.WrapText = true;
                     }
+                    else if (key == nameof(HistoricalDataColumn.Location))
+                    {
+                        cell.Value = value;
+                        cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
 
+                        // 💡 إضافة التغليف هنا أيضاً في حال لم يكن الرابط صالحاً
+                        cell.Style.Alignment.WrapText = true;
+                    }
                     if (r.ColorIndex.HasValue)
                     {
                         cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + ReferralColorPalette.Colors[r.ColorIndex.Value]);
@@ -1125,7 +1144,9 @@ public class ReferralJobService : IReferralJobService
 
         if (locationColIndex >= 0)
         {
-            sheet.Column(2 + locationColIndex).Width = 14;
+            var targetColumn = sheet.Column(2 + locationColIndex);
+            targetColumn.Width = 35;
+            // sheet.Column(2 + locationColIndex).Width = 14;
         }
 
         sheet.Column(1).Width = Math.Max(sheet.Column(1).Width, 14);

@@ -54,7 +54,7 @@ namespace Bank.API.Services
                 .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(connectionString),
                     new PostgreSqlStorageOptions
                     {
-                        InvisibilityTimeout = TimeSpan.FromMinutes(5),
+                        InvisibilityTimeout = TimeSpan.FromMinutes(30),
                         QueuePollInterval = TimeSpan.FromSeconds(1),
                         PrepareSchemaIfNecessary = true
                     }));
@@ -64,13 +64,37 @@ namespace Bank.API.Services
             //    options.Queues = new[] { "bulk-import", "default" };
             //    options.WorkerCount = 2; 
             //});
+            //services.AddHangfireServer(options =>
+            //{
+
+            //    // options.Queues = new[] { "default", "bulk-import", "recording-processing" };
+            //    options.Queues = new[] { "default", "bulk-import", "recording-processing", "certificates" };
+
+            //    options.WorkerCount = 4;
+            //});
+            // التسجيلات: شغل بيستنى الـ AI/GPU.
+            // الـ GPU مشترك مع الـ Live، فما تزوّدش العدد من غير ما فريق الـ AI يختبر.
             services.AddHangfireServer(options =>
             {
-
-                // options.Queues = new[] { "default", "bulk-import", "recording-processing" };
-                options.Queues = new[] { "default", "bulk-import", "recording-processing", "certificates" };
-
+                options.ServerName = "recordings";
+                options.Queues = new[] { "recording-processing", "default" };
                 options.WorkerCount = 4;
+            });
+
+            // مزامنة الشهادات + الـ OCR (كل ساعة). 2 = Certificates:OcrEngineCount الافتراضي
+            services.AddHangfireServer(options =>
+            {
+                options.ServerName = "certificates";
+                options.Queues = new[] { "certificates" };
+                options.WorkerCount = 2;
+            });
+
+            // الاستيراد والمطابقة (queue الـ bulk-import): بيشتغلوا واحد ورا التاني
+            services.AddHangfireServer(options =>
+            {
+                options.ServerName = "imports";
+                options.Queues = new[] { "bulk-import" };
+                options.WorkerCount = 1;
             });
             services.AddScoped<DataFileImportJob>();
             return services;

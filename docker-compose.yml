@@ -1,5 +1,4 @@
 name: bank
-
 services:
   # ------------------------------------------------------------ PostgreSQL + PostGIS
   # The app uses geography columns, so the official `postgres` image is NOT enough;
@@ -7,10 +6,32 @@ services:
   db:
     image: postgis/postgis:16-3.4
     restart: unless-stopped
+    # Docker's default /dev/shm is 64MB, which breaks parallel queries.
+    shm_size: 1gb
+    # With a large shared_buffers, shutdown does a long checkpoint. Give it time
+    # instead of letting Docker kill it after the default 10s.
+    stop_grace_period: 2m
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bank_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your .env file}
+    # Tuned for: 16 vCPU / 64 GB RAM / NVMe, ~50 concurrent users.
+    # If `docker stats` + `free -h` show other containers using lots of RAM,
+    # lower shared_buffers to 12GB and effective_cache_size to 32GB.
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=16GB
+      -c effective_cache_size=40GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=1GB
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c jit=off
+      -c max_wal_size=8GB
+      -c temp_file_limit=20GB
+      -c shared_preload_libraries=pg_stat_statements
+      -c log_min_duration_statement=1000
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,11 +39,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     # Uncomment ONLY if an outside machine must reach the DB directly (not needed
     # when the API runs in this same compose stack):
     # ports:
     #   - "${DB_BIND:-127.0.0.1}:5432:5432"
-
   # ------------------------------------------------- one-shot migration runner
   # Built from the Dockerfile `migrator` stage (EF Core bundle). Runs, applies
   # migrations, exits. `api` waits for it to finish successfully.
@@ -37,7 +62,6 @@ services:
     command:
       - "--connection"
       - "Host=db;Port=5432;Database=${POSTGRES_DB:-bank_system};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}"
-
   # ------------------------------------------------------------------ Bank API
   api:
     build:
@@ -54,26 +78,20 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       Firebase__CredentialsPath: /run/secrets/firebase.json
-
       # Trust X-Forwarded-* headers from Nginx/Caddy sitting in front of the app.
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
-
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-bank_system};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}"
-
+      # Pool settings appended: 80 max connections per pool (API + Hangfire share this one).
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-bank_system};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD};Maximum Pool Size=80;Minimum Pool Size=5;Connection Idle Lifetime=300"
       Auth__JWT__Key: ${JWT_KEY:?set JWT_KEY in your .env file}
       Gemini__ApiKey: ${GEMINI_API_KEY:-}
       GoogleDrive__ClientId: ${GOOGLE_CLIENT_ID:-}
       GoogleDrive__ClientSecret: ${GOOGLE_CLIENT_SECRET:-}
       GoogleDrive__RefreshToken: ${GOOGLE_REFRESH_TOKEN:-}
-
       # Plate AI server (plate_model). Inside the container "localhost" is the API itself,
       # so set these in .env to the AI server's real address.
       AiService__BaseUrl: ${AI_BASE_URL:-http://host.docker.internal:8000}
       AiService__ApiKey: ${AI_API_KEY:-}
       LiveCheckAi__WebSocketUrl: ${AI_WS_URL:-ws://host.docker.internal:8000/ws/live-check}
-     
-
-
       FileStorage__RootPath: /data/storage
     extra_hosts:
       # lets the default AI address above reach an AI server running on the Docker host (Linux needs this)
@@ -86,7 +104,11 @@ services:
       # Bind to localhost only; put Nginx/Caddy in front for TLS.
       # Change to "${API_BIND:-127.0.0.1}:8080:8080" to make the host configurable.
       - "127.0.0.1:8080:8080"
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 volumes:
   pgdata:
   storage:

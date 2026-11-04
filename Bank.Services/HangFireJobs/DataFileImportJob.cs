@@ -134,6 +134,19 @@ public class DataFileImportJob
             await transaction.CommitAsync(cancellationToken);
             commitStopwatch.Stop();
 
+            // تحديث إحصائيات الـ planner بعد استيراد ملايين الصفوف
+            try
+            {
+                await using var analyze = connection.CreateCommand();
+                analyze.CommandText = "ANALYZE historical_plates;";
+                analyze.CommandTimeout = 300;
+                await analyze.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ANALYZE historical_plates failed for DataFile {DataFileId}", dataFileId);
+            }
+
             totalStopwatch.Stop();
             _logger.LogInformation(
                 "PHASE commit: {ElapsedMs}ms | TOTAL import for DataFile {DataFileId}: {TotalMs}ms ({TotalRows} rows)",
