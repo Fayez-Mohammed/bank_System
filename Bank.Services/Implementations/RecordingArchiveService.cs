@@ -182,30 +182,114 @@ public class RecordingArchiveService : IRecordingArchiveService
         var title = $"نسخة تسجيل {lastUpdated:yyyy-MM-dd}";
         return ApiResponse<RecordingArchiveListResponseDto>.SuccessResponse(new RecordingArchiveListResponseDto(title, result));
     }
+    //public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
+    //Guid currentUserId, string? fileName, CancellationToken cancellationToken = default)
+    //{
+
+    //    var rows = await _dbContext.RecordingArchivePlates
+    //        .AsNoTracking()
+    //        .Where(a => a.UserId == currentUserId)
+    //        .OrderBy(a => a.SourceSessionId)       // 💡 الترتيب حسب SessionId أولاً لجمع كل جلسة مع بعضها
+    //        .ThenBy(a => a.RecordedAt)
+    //        .Select(a => new
+    //        {
+    //            a.SourceSessionId,                // 💡 إضافة SourceSessionId
+    //            a.NormalizedPlate,
+    //            a.Location,
+    //            a.RecordedAt,
+    //            a.District,
+    //            a.Street,
+
+    //            a.Notes,
+    //            a.VehicleType,
+    //            a.RecorderName
+    //        })
+    //        .ToListAsync(cancellationToken);
+
+    //    var title = fileName ?? $"نسخة تسجيل {DateTime.UtcNow.ToSaudiLocalTime():yyyy-MM-dd}";
+
+    //    using var workbook = new XLWorkbook();
+    //    var sheet = workbook.Worksheets.Add(title);
+    //    sheet.RightToLeft = true;
+
+    //    sheet.Cell(1, 1).Value = "رقم اللوحة";
+    //    sheet.Cell(1, 2).Value = "نوع السيارة";
+    //    sheet.Cell(1, 3).Value = "ملاحظات";
+
+    //    sheet.Cell(1, 4).Value = "GPS";
+    //    sheet.Cell(1, 5).Value = "الشارع";
+    //    sheet.Cell(1, 6).Value = "الحي";
+
+    //    sheet.Cell(1, 7).Value = "تاريخ التسجيل";
+    //    sheet.Cell(1, 8).Value = "اسم المسجّل";
+
+    //    var r = 2;
+    //    Guid? previousSessionId = null;
+
+    //    foreach (var row in rows)
+    //    {
+    //        // 💡 لو الـ Session تختلف عن اللي قبلها (ومش أول صف)، نترك صف فاضي
+    //        if (previousSessionId.HasValue && previousSessionId.Value != row.SourceSessionId)
+    //        {
+    //            r++; // ترك صف فارغ بين الـ Sessions
+    //        }
+
+    //        sheet.Cell(r, 1).Value = row.NormalizedPlate;
+    //        sheet.Cell(r, 2).Value = row.VehicleType;
+    //        sheet.Cell(r, 3).Value = row.Notes;
+
+    //        var locCell = sheet.Cell(r, 4);
+    //        if (!string.IsNullOrWhiteSpace(row.Location)
+    //            && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
+    //        {
+    //            locCell.Value = row.Location;
+    //            locCell.SetHyperlink(new XLHyperlink(locUri));
+    //            locCell.Style.Font.FontColor = XLColor.Blue;
+    //            locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+    //        }
+    //        else
+    //        {
+    //            locCell.Value = row.Location;
+    //        }
+
+    //        sheet.Cell(r, 5).Value = row.Street;
+    //        sheet.Cell(r, 6).Value = row.District;
+
+    //        sheet.Cell(r, 7).Value = row.RecordedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    //        sheet.Cell(r, 8).Value = row.RecorderName;
+
+    //        previousSessionId = row.SourceSessionId; // تحديث الـ Session الحالية
+    //        r++;
+    //    }
+
+    //    sheet.Columns().AdjustToContents();
+
+    //    using var stream = new MemoryStream();
+    //    workbook.SaveAs(stream);
+
+    //    return (stream.ToArray(), $"{title}.xlsx");
+    //}
     public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
-    Guid currentUserId, string? fileName, CancellationToken cancellationToken = default)
+        Guid currentUserId, string? fileName, CancellationToken cancellationToken = default)
     {
-     
         var rows = await _dbContext.RecordingArchivePlates
             .AsNoTracking()
             .Where(a => a.UserId == currentUserId)
-            .OrderBy(a => a.SourceSessionId)       // 💡 الترتيب حسب SessionId أولاً لجمع كل جلسة مع بعضها
-            .ThenBy(a => a.RecordedAt)
+            .OrderBy(a => a.CreatedAt)
             .Select(a => new
             {
-                a.SourceSessionId,                // 💡 إضافة SourceSessionId
                 a.NormalizedPlate,
                 a.Location,
                 a.RecordedAt,
                 a.District,
                 a.Street,
-                
                 a.Notes,
                 a.VehicleType,
                 a.RecorderName
             })
             .ToListAsync(cancellationToken);
 
+        // اسم الملف/الشيت بتاريخ التنزيل نفسه (مش تاريخ آخر صف)، زي ما اتفقنا.
         var title = fileName ?? $"نسخة تسجيل {DateTime.UtcNow.ToSaudiLocalTime():yyyy-MM-dd}";
 
         using var workbook = new XLWorkbook();
@@ -224,44 +308,33 @@ public class RecordingArchiveService : IRecordingArchiveService
         sheet.Cell(1, 8).Value = "اسم المسجّل";
 
         var r = 2;
-        Guid? previousSessionId = null;
-
         foreach (var row in rows)
         {
-            // 💡 لو الـ Session تختلف عن اللي قبلها (ومش أول صف)، نترك صف فاضي
-            if (previousSessionId.HasValue && previousSessionId.Value != row.SourceSessionId)
-            {
-                r++; // ترك صف فارغ بين الـ Sessions
-            }
-
             sheet.Cell(r, 1).Value = row.NormalizedPlate;
             sheet.Cell(r, 2).Value = row.VehicleType;
             sheet.Cell(r, 3).Value = row.Notes;
 
+            // sheet.Cell(r, 4).Value = row.Location;
             var locCell = sheet.Cell(r, 4);
             if (!string.IsNullOrWhiteSpace(row.Location)
                 && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
             {
-                locCell.Value = row.Location;
-                locCell.SetHyperlink(new XLHyperlink(locUri));
+                locCell.Value = row.Location;                       // اللينك نفسه مكتوب
+                locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
                 locCell.Style.Font.FontColor = XLColor.Blue;
                 locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
             }
             else
             {
-                locCell.Value = row.Location;
+                locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
             }
-
             sheet.Cell(r, 5).Value = row.Street;
             sheet.Cell(r, 6).Value = row.District;
 
             sheet.Cell(r, 7).Value = row.RecordedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
             sheet.Cell(r, 8).Value = row.RecorderName;
-
-            previousSessionId = row.SourceSessionId; // تحديث الـ Session الحالية
             r++;
         }
-
         sheet.Columns().AdjustToContents();
 
         using var stream = new MemoryStream();
@@ -269,72 +342,6 @@ public class RecordingArchiveService : IRecordingArchiveService
 
         return (stream.ToArray(), $"{title}.xlsx");
     }
-    //public async Task<(byte[] FileBytes, string FileName)> ExportAsync(
-    //    Guid currentUserId,string? fileName, CancellationToken cancellationToken = default)
-    //{
-    //    var rows = await _dbContext.RecordingArchivePlates
-    //        .AsNoTracking()
-    //        .Where(a => a.UserId == currentUserId)
-    //        .OrderBy(a => a.CreatedAt)
-    //        .Select(a => new
-    //        {
-    //            a.NormalizedPlate, a.Location, a.RecordedAt, a.District, a.Street, a.Notes, a.VehicleType, a.RecorderName
-    //        })
-    //        .ToListAsync(cancellationToken);
-
-    //    // اسم الملف/الشيت بتاريخ التنزيل نفسه (مش تاريخ آخر صف)، زي ما اتفقنا.
-    //    var title =fileName?? $"نسخة تسجيل {DateTime.UtcNow.ToSaudiLocalTime():yyyy-MM-dd}";
-
-    //    using var workbook = new XLWorkbook();
-    //    var sheet = workbook.Worksheets.Add(title);
-    //    sheet.RightToLeft = true;
-
-    //    sheet.Cell(1, 1).Value = "رقم اللوحة";
-    //    sheet.Cell(1, 2).Value = "نوع السيارة";
-    //    sheet.Cell(1, 3).Value = "ملاحظات";
-
-    //    sheet.Cell(1, 4).Value = "GPS";
-    //    sheet.Cell(1, 5).Value = "الشارع";
-    //    sheet.Cell(1, 6).Value = "الحي";
-
-    //    sheet.Cell(1, 7).Value = "تاريخ التسجيل";
-    //    sheet.Cell(1, 8).Value = "اسم المسجّل";
-
-    //    var r = 2;
-    //    foreach (var row in rows)
-    //    {
-    //        sheet.Cell(r, 1).Value = row.NormalizedPlate;
-    //        sheet.Cell(r, 2).Value = row.VehicleType;
-    //        sheet.Cell(r, 3).Value = row.Notes;
-
-    //        // sheet.Cell(r, 4).Value = row.Location;
-    //        var locCell = sheet.Cell(r, 4);
-    //        if (!string.IsNullOrWhiteSpace(row.Location)
-    //            && Uri.TryCreate(row.Location, UriKind.Absolute, out var locUri))
-    //        {
-    //            locCell.Value = row.Location;                       // اللينك نفسه مكتوب
-    //            locCell.SetHyperlink(new XLHyperlink(locUri));      // يتضغط عليه ويفتح الموقع
-    //            locCell.Style.Font.FontColor = XLColor.Blue;
-    //            locCell.Style.Font.Underline = XLFontUnderlineValues.Single;
-    //        }
-    //        else
-    //        {
-    //            locCell.Value = row.Location;                       // فاضي أو مش لينك صالح: يتكتب زي ما هو
-    //        }
-    //        sheet.Cell(r, 5).Value = row.Street;
-    //        sheet.Cell(r, 6).Value = row.District;
-
-    //        sheet.Cell(r, 7).Value = row.RecordedAt.ToSaudiLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-    //        sheet.Cell(r, 8).Value = row.RecorderName;
-    //        r++;
-    //    }
-    //    sheet.Columns().AdjustToContents();
-
-    //    using var stream = new MemoryStream();
-    //    workbook.SaveAs(stream);
-
-    //    return (stream.ToArray(), $"{title}.xlsx");
-    //}
 
     public async Task<ApiResponse<bool>> DeleteAllAsync(Guid currentUserId, CancellationToken cancellationToken = default)
     {
