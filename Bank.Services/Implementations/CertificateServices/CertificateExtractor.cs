@@ -656,26 +656,47 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         var certNo = Find(@"REPO-\d{3}-\d{8}");
         var cells = new Dictionary<string, CertCell>();
+        //var unifiedNoWord = words
+        //  .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"700\d{7}"))
+        //  .OrderByDescending(w => w.BoundingBox.Bottom)
+        //  .FirstOrDefault();
+
+        //var crWord = words
+        //    .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"101\d{7}"))
+        //    .OrderByDescending(w => w.BoundingBox.Bottom)
+        //    .FirstOrDefault();
         var unifiedNoWord = words
-          .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"700\d{7}"))
-          .OrderByDescending(w => w.BoundingBox.Bottom)
-          .FirstOrDefault();
-
-        var crWord = words
-            .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"101\d{7}"))
-            .OrderByDescending(w => w.BoundingBox.Bottom)
-            .FirstOrDefault();
-
-        // لو السجل التجاري مش 101…، خده من الصف اللي فوق الرقم الوطني الموحد مباشرة.
-        if (crWord == null && unifiedNoWord != null)
+       .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"700\d{7}"))
+       .OrderByDescending(w => w.BoundingBox.Bottom)
+       .FirstOrDefault();
+        //// لو السجل التجاري مش 101…، خده من الصف اللي فوق الرقم الوطني الموحد مباشرة.
+        //if (crWord == null && unifiedNoWord != null)
+        //{
+        //    crWord = words
+        //        .Where(w => Regex.IsMatch(w.Text, @"^\d{10}$") &&
+        //                    w.BoundingBox.Bottom > unifiedNoWord.BoundingBox.Bottom + 8 &&
+        //                    w.BoundingBox.Bottom < unifiedNoWord.BoundingBox.Bottom + 30)
+        //        .OrderByDescending(w => w.BoundingBox.Bottom)
+        //        .FirstOrDefault();
+        //}
+        Word? crWord = null;
+        if (unifiedNoWord != null)
         {
             crWord = words
                 .Where(w => Regex.IsMatch(w.Text, @"^\d{10}$") &&
                             w.BoundingBox.Bottom > unifiedNoWord.BoundingBox.Bottom + 8 &&
-                            w.BoundingBox.Bottom < unifiedNoWord.BoundingBox.Bottom + 30)
+                            w.BoundingBox.Bottom < unifiedNoWord.BoundingBox.Bottom + 30 &&
+                            w.BoundingBox.Right > unifiedNoWord.BoundingBox.Left - 20 &&
+                            w.BoundingBox.Left < unifiedNoWord.BoundingBox.Right + 20)
                 .OrderByDescending(w => w.BoundingBox.Bottom)
                 .FirstOrDefault();
         }
+
+        // Fallback لو مفيش رقم موحد: أول سجل تجاري 101… في النص العلوي.
+        crWord ??= words
+            .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"101\d{7}"))
+            .OrderByDescending(w => w.BoundingBox.Bottom)
+            .FirstOrDefault();
 
         if (unifiedNoWord != null || crWord != null)
         {
@@ -818,19 +839,61 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
     // ---------------------------------------------------------------------
     //  سجل: OCR
     // ---------------------------------------------------------------------
+    //private Decision RunOcr(
+    //    TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
+    //    string key, bool isPlate, int? mustLen, CancellationToken ct)
+    //{
+    //    if (!lay.Cells.TryGetValue(key, out var c)) return Decision.Empty;
+
+    //    var results = new List<(string Text, double Conf)>();
+    //    //var psms = isPlate
+    //    //    ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
+    //    //    : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord };
+    //    var psms = isPlate
+    //          ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
+    //          : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord, PageSegMode.SparseText, PageSegMode.SingleChar };
+
+    //    engine.SetVariable("tessedit_char_whitelist", isPlate ? PlateAlphabet : "");
+    //    int total = 0;
+
+    //    foreach (var pad in new[] { 3.0, 5.0 })
+    //    {
+    //        foreach (var scale in new[] { 2, 3 })
+    //        {
+    //            ct.ThrowIfCancellationRequested();
+
+    //            int l = (int)Math.Max(0, (c.X0 - pad) * sx);
+    //            int r = (int)Math.Min(bmp.Width, (c.X1 + pad) * sx);
+    //            int t = (int)Math.Max(0, (lay.PageH - c.TopPdf - pad) * sy);
+    //            int b = (int)Math.Min(bmp.Height, (lay.PageH - c.BotPdf + pad) * sy);
+
+    //            var png = MakeCrop(bmp, l, t, r, b, scale);
+    //            using var pix = Pix.LoadFromMemory(png);
+
+    //            foreach (var psm in psms)
+    //            {
+    //                total++;
+    //                using var tp = engine.Process(pix, psm);
+    //                var text = Clean(tp.GetText(), isPlate);
+    //                if (text.Length > 0 && (mustLen == null || text.Length == mustLen))
+    //                    results.Add((text, tp.GetMeanConfidence()));
+    //            }
+    //        }
+    //    }
+
+    //    return Vote(results, total);
+    //}
     private Decision RunOcr(
-        TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
-        string key, bool isPlate, int? mustLen, CancellationToken ct)
+       TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
+       string key, bool isPlate, int? mustLen, CancellationToken ct)
     {
         if (!lay.Cells.TryGetValue(key, out var c)) return Decision.Empty;
 
         var results = new List<(string Text, double Conf)>();
-        //var psms = isPlate
-        //    ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
-        //    : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord };
+        var singleCharResults = new List<(string Text, double Conf)>();
         var psms = isPlate
-       ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
-       : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord, PageSegMode.SparseText };
+            ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
+            : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord, PageSegMode.SparseText, PageSegMode.SingleChar };
 
         engine.SetVariable("tessedit_char_whitelist", isPlate ? PlateAlphabet : "");
         int total = 0;
@@ -854,15 +917,34 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     total++;
                     using var tp = engine.Process(pix, psm);
                     var text = Clean(tp.GetText(), isPlate);
+                    double conf = tp.GetMeanConfidence();
+
                     if (text.Length > 0 && (mustLen == null || text.Length == mustLen))
-                        results.Add((text, tp.GetMeanConfidence()));
+                        results.Add((text, conf));
+
+                    if (psm == PageSegMode.SingleChar && text.Length > 0)
+                        singleCharResults.Add((text, conf));
                 }
             }
         }
 
-        return Vote(results, total);
-    }
+        var voted = Vote(results, total);
 
+        // المصنع/الموديل في سجل بيطلعوا أحياناً كـ glyph واحد مضغوط.
+        // في الحالة دي SingleLine بيقسّم الكلمة ويضيّع أول حرف، بينما SingleChar
+        // بيقراها كلمة كاملة بثقة أعلى. نفضّل SingleChar لو نتيجته أوضح/أوثق.
+        if (key is "make" or "model" && singleCharResults.Count > 0)
+        {
+            var single = Vote(singleCharResults, 4);
+            if (single.Text.Length > 0 && single.Votes >= 2 && single.Conf >= 0.75 &&
+                (single.Text.Length > voted.Text.Length || single.Conf > voted.Conf + 0.05))
+            {
+                return single;
+            }
+        }
+
+        return voted;
+    }
     private static byte[] MakeCrop(SKBitmap src, int l, int t, int r, int b, int scale)
     {
         const int border = 30;
@@ -890,15 +972,31 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         return plate ? t.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا') : t;
     }
 
+    //private static Decision Vote(List<(string Text, double Conf)> r, int total)
+    //{
+    //    if (r.Count == 0) return new Decision("", 0, total, 0);
+    //    var best = r.GroupBy(x => x.Text)
+    //                .Select(g => new { g.Key, N = g.Count(), C = g.Average(x => x.Conf) })
+    //                .OrderByDescending(x => x.N).ThenByDescending(x => x.C).First();
+    //    return new Decision(best.Key, best.N, total, best.C);
+    //}
     private static Decision Vote(List<(string Text, double Conf)> r, int total)
     {
         if (r.Count == 0) return new Decision("", 0, total, 0);
-        var best = r.GroupBy(x => x.Text)
-                    .Select(g => new { g.Key, N = g.Count(), C = g.Average(x => x.Conf) })
-                    .OrderByDescending(x => x.N).ThenByDescending(x => x.C).First();
-        return new Decision(best.Key, best.N, total, best.C);
-    }
 
+        // التصويت بيتعمل على النص المُطبّع (أ/إ/آ → ا، ى → ي، ة → ه)،
+        // عشان اختلافات الهمزات ما تقسّمش الأصوات بين "ابيض" و"أبيض" وتخلّي نص غلط يكسب.
+        var best = r.GroupBy(x => NormAr(x.Text))
+                    .Select(g => new
+                    {
+                        Text = g.OrderByDescending(x => x.Conf).First().Text,
+                        N = g.Count(),
+                        C = g.Average(x => x.Conf)
+                    })
+                    .OrderByDescending(x => x.N).ThenByDescending(x => x.C).First();
+
+        return new Decision(best.Text, best.N, total, best.C);
+    }
     // =====================================================================
     //  Lexicon snapping (مشترك بين النوعين)
     // =====================================================================
@@ -962,7 +1060,6 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         return (cleaned, false);
     }
-
     private static (string Value, bool Snapped) ExtractBestColor(string ocrText, string[] lexicon)
     {
         if (string.IsNullOrWhiteSpace(ocrText)) return ("", false);
@@ -980,7 +1077,17 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         foreach (var color in sortedLexicon)
         {
-            if (cleaned.Contains(NormAr(color))) return (color, true);
+            string normColor = NormAr(color);
+            int idx = cleaned.IndexOf(normColor, StringComparison.Ordinal);
+            if (idx < 0) continue;
+
+            // لو التقطنا لون مع كلمة وصف إضافية زي "غامق" أو "فاتح"، رجّع النص الكامل
+            // بدل ما نرجّع اللون الأساسي فقط ونقص المعلومة.
+            string extra = cleaned.Remove(idx, normColor.Length).Trim();
+            if (extra.Length > 0 && extra.Any(ch => ch >= '\u0621' && ch <= '\u064A'))
+                return (cleaned, true);
+
+            return (color, true);
         }
 
         string[] words = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1012,9 +1119,59 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         return (bestMatch ?? cleaned, bestMatch != null);
     }
 
+    //private static (string Value, bool Snapped) ExtractBestColor(string ocrText, string[] lexicon)
+    //{
+    //    if (string.IsNullOrWhiteSpace(ocrText)) return ("", false);
+
+    //    string cleaned = NormAr(StripHeaderPrefixes(ocrText))
+    //        .Replace("لون", "")
+    //        .Replace("المركبه", "")
+    //        .Replace("المركبة", "")
+    //        .Replace("الأصل", "")
+    //        .Replace("الاصل", "")
+    //        .Replace(":", "")
+    //        .Trim();
+
+    //    var sortedLexicon = lexicon.OrderByDescending(c => c.Length).ToList();
+
+    //    foreach (var color in sortedLexicon)
+    //    {
+    //        if (cleaned.Contains(NormAr(color))) return (color, true);
+    //    }
+
+    //    string[] words = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    //    string? bestMatch = null;
+    //    int lowestDistance = int.MaxValue;
+
+    //    foreach (var color in sortedLexicon)
+    //    {
+    //        string normColor = NormAr(color);
+
+    //        int distFull = Lev(cleaned, normColor);
+    //        if (distFull < lowestDistance && distFull <= 2)
+    //        {
+    //            lowestDistance = distFull;
+    //            bestMatch = color;
+    //        }
+
+    //        foreach (var word in words)
+    //        {
+    //            int distWord = Lev(word, normColor);
+    //            if (distWord < lowestDistance && distWord <= (normColor.Length >= 4 ? 1 : 0))
+    //            {
+    //                lowestDistance = distWord;
+    //                bestMatch = color;
+    //            }
+    //        }
+    //    }
+
+    //    return (bestMatch ?? cleaned, bestMatch != null);
+    //}
+
     // =====================================================================
     //  Types
     // =====================================================================
+
     private sealed record CertCell(string Name, double X0, double X1, double TopPdf, double BotPdf);
 
     private sealed record CertLayout(
