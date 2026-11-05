@@ -93,71 +93,126 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         return CertificateProvider.Sijil;
     }
-
     // =====================================================================
     //  توثيق: استخراج نصي مباشر (من غير OCR)
+    //
+    //  ده بديل كامل لـ: ExtractTawtheeq + NormalizeTawtheeqTokens
+    //  (StripHeaderPrefixes و CleanLessorName و LessorHeaderWords زي ما هم من غير تغيير)
+    //
+    //  اللي اتصلّح:
+    //   1) الـ VIN: رقم العقد (75100000480699980) 17 رقم، فكان بيتاخد على إنه VIN.
+    //      دلوقتي بندوّر على صف "رقم الهيكل"، وبنشترط حرف إنجليزي واحد على الأقل.
+    //   2) رقم السند: كان بيدوّر على 10xxxxx (7 أرقام)، والسندات الحالية 6 أرقام.
+    //      دلوقتي بياخده من صف "رقم السند".
+    //   3) عكس الحروف العربية: كان char-by-char فبيقلب (لا) لـ (ال) و (لأ) لـ (أل)،
+    //      فبيطلع "الند كروزر" بدل "لاند كروزر"، وكلمات العناوين ما بتتشالش صح.
+    //      دلوقتي بنعكس على مستوى الـ Letter (الـ glyph) فالـ ligature بتفضل سليمة.
     // =====================================================================
     private CertificateExtractionResult ExtractTawtheeq(byte[] pdfBytes, string? fileName)
     {
         using var doc = PdfDocument.Open(pdfBytes);
         var page = doc.GetPage(1);
-        var words = page.GetWords().ToList();
-        double k = page.Width / TawtheeqReferenceWidth;
+        return ExtractTawtheeqFromWords(page.GetWords().ToList(), page.Width, fileName);
+    }
 
-        // ---------- 1) رقم السند (للتحقق إن الملف شهادة فعلاً) + الـ VIN ----------
-        var fullText = string.Join(" ", words.Select(w => w.Text));
-        var certMatch = Regex.Match(fullText, @"(?<!\d)10\d{5}(?!\d)");
-        var certNo = certMatch.Success ? certMatch.Value : null;
+    private sealed record TawToken(Word Word, string Text);
 
-        var vinWord = words.FirstOrDefault(w =>
-            Regex.IsMatch(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])"));
+    private CertificateExtractionResult ExtractTawtheeqFromWords(List<Word> words, double pageWidth, string? fileName)
+    {
+        double k = pageWidth / TawtheeqReferenceWidth;
+
+        // كل كلمة بتتحول لنصها المنطقي (RTL) مرة واحدة
+        var toks = words.Select(w => new TawToken(w, TawtheeqLogicalText(w))).ToList();
+
+        static string Clean(string t) => t.Replace(":", "").Replace("ـ", "").Trim();
+        static bool SameRow(Word a, Word b, double tol = 5) =>
+            Math.Abs(a.BoundingBox.Bottom - b.BoundingBox.Bottom) <= tol;
+
+        // ---------- 1) رقم السند (للتحقق إن الملف شهادة فعلاً) ----------
+        // الصف: "رقم السند: 926691". التاريخ في آخر الصفحة ("تاريخ اصدار السند") ما فيهوش كلمة "رقم" فبيتتجاهل.
+        var certLabel = toks.FirstOrDefault(t => Clean(t.Text) == "السند" &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+
+        string? certNo = null;
+        if (certLabel != null)
+        {
+            certNo = toks
+                .Where(o => SameRow(o.Word, certLabel.Word, 6) &&
+                            o.Word.BoundingBox.Right <= certLabel.Word.BoundingBox.Left + 2 &&
+                            Regex.IsMatch(Clean(o.Text), @"^\d{5,10}$"))
+                .OrderByDescending(o => o.Word.BoundingBox.Left)          // الأقرب للعنوان
+                .Select(o => Clean(o.Text))
+                .FirstOrDefault();
+        }
+
+        // ---------- 2) الـ VIN ----------
+        // مهم: رقم العقد (17 رقم بس) بيطابق شكل الـ VIN. فبنشترط حرف إنجليزي واحد على الأقل،
+        // وبنفضّل الكلمة اللي على نفس صف عنوان "رقم الهيكل".
+        var vinRegex = new Regex(@"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+
+        static (Word? Word, string? Vin) FindVin(IEnumerable<TawToken> candidates, Regex rx)
+        {
+            foreach (var c in candidates)
+            {
+                var m = rx.Match(c.Word.Text);
+                if (m.Success && m.Value.Any(char.IsAsciiLetter)) return (c.Word, m.Value);
+            }
+            return (null, null);
+        }
+
+        var vinLabel = toks.FirstOrDefault(t => Clean(t.Text) == "الهيكل" &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+
+        var (vinWord, vin) = vinLabel != null
+            ? FindVin(toks.Where(o => SameRow(o.Word, vinLabel.Word, 6)), vinRegex)
+            : (null, null);
+
         if (vinWord == null)
+            (vinWord, vin) = FindVin(toks, vinRegex);
+
+        if (vinWord == null || vin == null)
             throw new InvalidDataException("شهادة توثيق بدون رقم هيكل (VIN): تعذّر تحديد جدول بيانات الأصل.");
 
-        var vin = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}").Value;
         double vinY = vinWord.BoundingBox.Bottom;
 
-        // ---------- 2) اسم المؤجر ----------
+        // ---------- 3) اسم المؤجر ----------
         // بين عنوان "الصفة في العقد: المؤجر" وعنوان "الصفة في العقد: المستأجر"، على يسار كلمة "الاسم" في نفس السطر.
         string lessor = "";
 
-        var lessorHeader = words.FirstOrDefault(w =>
-            (w.Text.Contains("المؤجر") || w.Text.Contains("رجؤمل")) &&
-            words.Any(o => Math.Abs(o.BoundingBox.Bottom - w.BoundingBox.Bottom) < 5 &&
-                           (o.Text.Contains("الصفة") || o.Text.Contains("ةفصل"))));
+        var lessorHeader = toks.FirstOrDefault(t => Clean(t.Text).Contains("المؤجر") &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).Contains("الصفة")));
 
-        var lesseeHeader = words.FirstOrDefault(w =>
-            (w.Text.Contains("المستأجر") || w.Text.Contains("رجأتسمل")) &&
-            words.Any(o => Math.Abs(o.BoundingBox.Bottom - w.BoundingBox.Bottom) < 5 &&
-                           (o.Text.Contains("الصفة") || o.Text.Contains("ةفصل"))));
+        var lesseeHeader = toks.FirstOrDefault(t => Clean(t.Text).Contains("المستأجر") &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).Contains("الصفة")));
 
         if (lessorHeader != null)
         {
-            double topY = lessorHeader.BoundingBox.Bottom;
-            double bottomY = lesseeHeader != null ? lesseeHeader.BoundingBox.Top : topY - 120;
+            double topY = lessorHeader.Word.BoundingBox.Bottom;
+            double bottomY = lesseeHeader != null ? lesseeHeader.Word.BoundingBox.Top : topY - 120;
 
-            var nameLabel = words.FirstOrDefault(w =>
-                w.BoundingBox.Bottom < topY &&
-                w.BoundingBox.Bottom > bottomY &&
-                w.BoundingBox.Left >= page.Width * 0.70 &&                 // خانة الاسم في أقصى اليمين
-                (w.Text.Contains("الاسم") || w.Text.Contains("مسلا") || w.Text.StartsWith("مسا")));
+            var nameLabel = toks.FirstOrDefault(t =>
+                t.Word.BoundingBox.Bottom < topY &&
+                t.Word.BoundingBox.Bottom > bottomY &&
+                t.Word.BoundingBox.Left >= pageWidth * 0.70 &&               // خانة الاسم في أقصى اليمين
+                (Clean(t.Text) == "الاسم" || Clean(t.Text) == "اسم"));
 
             if (nameLabel != null)
             {
-                double labelRowY = nameLabel.BoundingBox.Bottom;
-                var lessorWords = words
-                    .Where(w => Math.Abs(w.BoundingBox.Bottom - labelRowY) <= 5)                       // نفس السطر
-                    .Where(w => w.BoundingBox.Right < nameLabel.BoundingBox.Left &&
-                                w.BoundingBox.Left >= page.Width * 0.40)
-                    .OrderByDescending(w => w.BoundingBox.Left)                                        // من اليمين لليسار
-                    .Select(w => w.Text);
+                var lessorWords = toks
+                    .Where(t => SameRow(t.Word, nameLabel.Word))                                          // نفس السطر
+                    .Where(t => t.Word.BoundingBox.Right < nameLabel.Word.BoundingBox.Left &&
+                                t.Word.BoundingBox.Left >= pageWidth * 0.40)
+                    .OrderByDescending(t => t.Word.BoundingBox.Left)                                      // من اليمين لليسار
+                    .Select(t => t.Word);
 
                 lessor = CleanLessorName(NormalizeTawtheeqTokens(lessorWords));
             }
         }
 
-        // ---------- 3) جدول الأصل (من صف الـ VIN وحتى 55 نقطة تحته) ----------
-        var assetWords = words.Where(w => w.BoundingBox.Bottom >= vinY - 55 && w.BoundingBox.Top <= vinY + 20).ToList();
+        // ---------- 4) جدول الأصل (من صف الـ VIN وحتى 55 نقطة تحته) ----------
+        var assetWords = words
+            .Where(w => w.BoundingBox.Bottom >= vinY - 55 && w.BoundingBox.Top <= vinY + 20)
+            .ToList();
 
         var rows = new List<List<Word>>();
         foreach (var w in assetWords.OrderByDescending(w => w.BoundingBox.Bottom))
@@ -167,7 +222,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             else r.Add(w);
         }
 
-        int vRow = rows.FindIndex(r => r.Any(w => w == vinWord || w.Text.Contains(vin)));
+        int vRow = rows.FindIndex(r => r.Any(w => ReferenceEquals(w, vinWord)));
         if (vRow == -1) vRow = 0;
 
         string GetCellText(int rowOffset, double minX, double maxX)
@@ -180,8 +235,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     double midX = (w.BoundingBox.Left + w.BoundingBox.Right) / 2.0;
                     return midX >= minX * k && midX <= maxX * k;
                 })
-                .OrderByDescending(w => w.BoundingBox.Left)   // من اليمين لليسار
-                .Select(w => w.Text);
+                .OrderByDescending(w => w.BoundingBox.Left);   // من اليمين لليسار
 
             return NormalizeTawtheeqTokens(cellWords);
         }
@@ -198,7 +252,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         var modelV = Snap(rawModel, CertificateLexicon.Models);
         var colorV = ExtractBestColor(rawColor, CertificateLexicon.Colors);
 
-        // ---------- 4) اللوحة ----------
+        // ---------- 5) اللوحة ----------
         var digitsMatch = Regex.Match(rawPlate, @"\d+");
         string plateDigits = digitsMatch.Success ? digitsMatch.Value : "";
         var digitsFromFileName = false;
@@ -210,7 +264,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         string plateLetters = string.Concat(Regex.Matches(rawPlate, @"[\u0621-\u064A]").Select(m => m.Value));
 
-        // ---------- 5) المراجعة ----------
+        // ---------- 6) المراجعة ----------
         var reasons = new List<string>();
         if (string.IsNullOrEmpty(certNo)) reasons.Add("رقم السند غير موجود");
         if (string.IsNullOrEmpty(plateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
@@ -233,35 +287,209 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             reasons.Count > 0, reasons);
     }
 
-    private static string NormalizeTawtheeqTokens(IEnumerable<string> words)
+    /// <summary>
+    /// النص المنطقي (RTL) للكلمة.
+    /// ملفات توثيق بتخزّن الحروف العربية بالترتيب البصري (شمال→يمين)، فلازم نعكسها.
+    /// العكس بيتم على مستوى الـ Letter مش الحرف: الـ ligatures (لا، لأ، لإ، لآ، لى) بتيجي كـ glyph واحد
+    /// قيمته حرفين، ولو عكسنا الحروف واحد واحد هتبوظ ("لاند" → "الند"، "الأصل" → "األصل").
+    /// الأرقام والإنجليزي ترتيبها البصري هو المنطقي، فبتتسيب زي ما هي.
+    /// </summary>
+    private static string TawtheeqLogicalText(Word word)
+    {
+        var text = word.Text;
+        if (!text.Any(c => c >= '\u0600' && c <= '\u06FF')) return text;
+
+        var letters = word.Letters.OrderBy(l => l.GlyphRectangle.Left).ToList();   // بصرياً: شمال → يمين
+        var sb = new StringBuilder(text.Length);
+        for (int i = letters.Count - 1; i >= 0; i--)
+            sb.Append(letters[i].Value.Normalize(NormalizationForm.FormKC));
+        return sb.ToString();
+    }
+
+    private static string NormalizeTawtheeqTokens(IEnumerable<Word> words)
     {
         var cleanTokens = new List<string>();
-        foreach (var raw in words)
+        foreach (var word in words)
         {
-            var w = raw.Replace(":", "").Replace("ـ", "").Trim();
+            var w = TawtheeqLogicalText(word).Replace(":", "").Replace("ـ", "").Trim();
             if (string.IsNullOrWhiteSpace(w)) continue;
 
-            // استبعاد العناوين الثابتة المعتدلة والمعكوسة
+            // استبعاد العناوين الثابتة (نوع، الأصل، رقم، اللوحة، لون، المصنع ...)
             if (CertificateLexicon.TawtheeqStopWords.Contains(w)) continue;
 
-            // الأرقام والكلمات الإنجليزية تبقى كما هي
-            if (w.All(c => char.IsDigit(c) || char.IsAsciiLetter(c)))
-            {
-                cleanTokens.Add(w);
-                continue;
-            }
-
-            // الكلمات العربية تُعكس حروفها لتعديل الترتيب البصري المعكوس
-            var chars = w.ToCharArray();
-            Array.Reverse(chars);
-            var reversed = new string(chars);
-
-            if (!CertificateLexicon.TawtheeqStopWords.Contains(reversed))
-                cleanTokens.Add(reversed);
+            cleanTokens.Add(w);
         }
 
         return StripHeaderPrefixes(string.Join(" ", cleanTokens).Trim());
     }
+    //// =====================================================================
+    ////  توثيق: استخراج نصي مباشر (من غير OCR)
+    //// =====================================================================
+    //private CertificateExtractionResult ExtractTawtheeq(byte[] pdfBytes, string? fileName)
+    //{
+    //    using var doc = PdfDocument.Open(pdfBytes);
+    //    var page = doc.GetPage(1);
+    //    var words = page.GetWords().ToList();
+    //    double k = page.Width / TawtheeqReferenceWidth;
+
+    //    // ---------- 1) رقم السند (للتحقق إن الملف شهادة فعلاً) + الـ VIN ----------
+    //    var fullText = string.Join(" ", words.Select(w => w.Text));
+    //    var certMatch = Regex.Match(fullText, @"(?<!\d)10\d{5}(?!\d)");
+    //    var certNo = certMatch.Success ? certMatch.Value : null;
+
+    //    var vinWord = words.FirstOrDefault(w =>
+    //        Regex.IsMatch(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])"));
+    //    if (vinWord == null)
+    //        throw new InvalidDataException("شهادة توثيق بدون رقم هيكل (VIN): تعذّر تحديد جدول بيانات الأصل.");
+
+    //    var vin = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}").Value;
+    //    double vinY = vinWord.BoundingBox.Bottom;
+
+    //    // ---------- 2) اسم المؤجر ----------
+    //    // بين عنوان "الصفة في العقد: المؤجر" وعنوان "الصفة في العقد: المستأجر"، على يسار كلمة "الاسم" في نفس السطر.
+    //    string lessor = "";
+
+    //    var lessorHeader = words.FirstOrDefault(w =>
+    //        (w.Text.Contains("المؤجر") || w.Text.Contains("رجؤمل")) &&
+    //        words.Any(o => Math.Abs(o.BoundingBox.Bottom - w.BoundingBox.Bottom) < 5 &&
+    //                       (o.Text.Contains("الصفة") || o.Text.Contains("ةفصل"))));
+
+    //    var lesseeHeader = words.FirstOrDefault(w =>
+    //        (w.Text.Contains("المستأجر") || w.Text.Contains("رجأتسمل")) &&
+    //        words.Any(o => Math.Abs(o.BoundingBox.Bottom - w.BoundingBox.Bottom) < 5 &&
+    //                       (o.Text.Contains("الصفة") || o.Text.Contains("ةفصل"))));
+
+    //    if (lessorHeader != null)
+    //    {
+    //        double topY = lessorHeader.BoundingBox.Bottom;
+    //        double bottomY = lesseeHeader != null ? lesseeHeader.BoundingBox.Top : topY - 120;
+
+    //        var nameLabel = words.FirstOrDefault(w =>
+    //            w.BoundingBox.Bottom < topY &&
+    //            w.BoundingBox.Bottom > bottomY &&
+    //            w.BoundingBox.Left >= page.Width * 0.70 &&                 // خانة الاسم في أقصى اليمين
+    //            (w.Text.Contains("الاسم") || w.Text.Contains("مسلا") || w.Text.StartsWith("مسا")));
+
+    //        if (nameLabel != null)
+    //        {
+    //            double labelRowY = nameLabel.BoundingBox.Bottom;
+    //            var lessorWords = words
+    //                .Where(w => Math.Abs(w.BoundingBox.Bottom - labelRowY) <= 5)                       // نفس السطر
+    //                .Where(w => w.BoundingBox.Right < nameLabel.BoundingBox.Left &&
+    //                            w.BoundingBox.Left >= page.Width * 0.40)
+    //                .OrderByDescending(w => w.BoundingBox.Left)                                        // من اليمين لليسار
+    //                .Select(w => w.Text);
+
+    //            lessor = CleanLessorName(NormalizeTawtheeqTokens(lessorWords));
+    //        }
+    //    }
+
+    //    // ---------- 3) جدول الأصل (من صف الـ VIN وحتى 55 نقطة تحته) ----------
+    //    var assetWords = words.Where(w => w.BoundingBox.Bottom >= vinY - 55 && w.BoundingBox.Top <= vinY + 20).ToList();
+
+    //    var rows = new List<List<Word>>();
+    //    foreach (var w in assetWords.OrderByDescending(w => w.BoundingBox.Bottom))
+    //    {
+    //        var r = rows.FirstOrDefault(row => Math.Abs(row[0].BoundingBox.Bottom - w.BoundingBox.Bottom) < 6);
+    //        if (r == null) rows.Add(new List<Word> { w });
+    //        else r.Add(w);
+    //    }
+
+    //    int vRow = rows.FindIndex(r => r.Any(w => w == vinWord || w.Text.Contains(vin)));
+    //    if (vRow == -1) vRow = 0;
+
+    //    string GetCellText(int rowOffset, double minX, double maxX)
+    //    {
+    //        int targetRow = vRow + rowOffset;
+    //        if (targetRow >= rows.Count) return "";
+    //        var cellWords = rows[targetRow]
+    //            .Where(w =>
+    //            {
+    //                double midX = (w.BoundingBox.Left + w.BoundingBox.Right) / 2.0;
+    //                return midX >= minX * k && midX <= maxX * k;
+    //            })
+    //            .OrderByDescending(w => w.BoundingBox.Left)   // من اليمين لليسار
+    //            .Select(w => w.Text);
+
+    //        return NormalizeTawtheeqTokens(cellWords);
+    //    }
+
+    //    // الصف 0 (صف الـ VIN): الموديل في العمود الأوسط
+    //    // الصف 1: اللوحة في العمود الأوسط
+    //    // الصف 2: اللون في العمود الأوسط | المصنع في العمود الأيمن
+    //    string rawModel = GetCellText(0, 180, 380);
+    //    string rawPlate = GetCellText(1, 180, 380);
+    //    string rawColor = GetCellText(2, 180, 380);
+    //    string rawMake = GetCellText(2, 380, 560);
+
+    //    var makeV = Snap(rawMake, CertificateLexicon.Makes);
+    //    var modelV = Snap(rawModel, CertificateLexicon.Models);
+    //    var colorV = ExtractBestColor(rawColor, CertificateLexicon.Colors);
+
+    //    // ---------- 4) اللوحة ----------
+    //    var digitsMatch = Regex.Match(rawPlate, @"\d+");
+    //    string plateDigits = digitsMatch.Success ? digitsMatch.Value : "";
+    //    var digitsFromFileName = false;
+    //    if (string.IsNullOrEmpty(plateDigits) && !string.IsNullOrEmpty(fileName))
+    //    {
+    //        var fnDigits = Regex.Match(fileName, @"\d{3,4}");
+    //        if (fnDigits.Success) { plateDigits = fnDigits.Value; digitsFromFileName = true; }
+    //    }
+
+    //    string plateLetters = string.Concat(Regex.Matches(rawPlate, @"[\u0621-\u064A]").Select(m => m.Value));
+
+    //    // ---------- 5) المراجعة ----------
+    //    var reasons = new List<string>();
+    //    if (string.IsNullOrEmpty(certNo)) reasons.Add("رقم السند غير موجود");
+    //    if (string.IsNullOrEmpty(plateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
+    //    if (digitsFromFileName) reasons.Add("أرقام اللوحة اتاخدت من اسم الملف (مش من نص الشهادة)");
+    //    if (string.IsNullOrEmpty(plateLetters)) reasons.Add("حروف اللوحة غير موجودة");
+    //    if (string.IsNullOrEmpty(lessor)) reasons.Add("اسم المؤجر غير موجود");
+
+    //    var normalized = string.IsNullOrEmpty(plateLetters) && string.IsNullOrEmpty(plateDigits)
+    //        ? null
+    //        : PlateNormalizer.Normalize(plateLetters + plateDigits);
+
+    //    _logger.LogInformation(
+    //        "Tawtheeq certificate extracted natively: plate={Plate} lessor={Lessor} review={Review}",
+    //        plateLetters + plateDigits, lessor, reasons.Count > 0);
+
+    //    return new CertificateExtractionResult(
+    //        CertificateProvider.Tawtheeq,
+    //        plateLetters, NullIfEmpty(plateDigits), normalized,
+    //        NullIfEmpty(makeV.Value), NullIfEmpty(modelV.Value), NullIfEmpty(colorV.Value), NullIfEmpty(lessor),
+    //        reasons.Count > 0, reasons);
+    //}
+
+    //private static string NormalizeTawtheeqTokens(IEnumerable<string> words)
+    //{
+    //    var cleanTokens = new List<string>();
+    //    foreach (var raw in words)
+    //    {
+    //        var w = raw.Replace(":", "").Replace("ـ", "").Trim();
+    //        if (string.IsNullOrWhiteSpace(w)) continue;
+
+    //        // استبعاد العناوين الثابتة المعتدلة والمعكوسة
+    //        if (CertificateLexicon.TawtheeqStopWords.Contains(w)) continue;
+
+    //        // الأرقام والكلمات الإنجليزية تبقى كما هي
+    //        if (w.All(c => char.IsDigit(c) || char.IsAsciiLetter(c)))
+    //        {
+    //            cleanTokens.Add(w);
+    //            continue;
+    //        }
+
+    //        // الكلمات العربية تُعكس حروفها لتعديل الترتيب البصري المعكوس
+    //        var chars = w.ToCharArray();
+    //        Array.Reverse(chars);
+    //        var reversed = new string(chars);
+
+    //        if (!CertificateLexicon.TawtheeqStopWords.Contains(reversed))
+    //            cleanTokens.Add(reversed);
+    //    }
+
+    //    return StripHeaderPrefixes(string.Join(" ", cleanTokens).Trim());
+    //}
 
     private static string StripHeaderPrefixes(string text)
     {
@@ -428,13 +656,27 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         var certNo = Find(@"REPO-\d{3}-\d{8}");
         var cells = new Dictionary<string, CertCell>();
+        var unifiedNoWord = words
+          .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"700\d{7}"))
+          .OrderByDescending(w => w.BoundingBox.Bottom)
+          .FirstOrDefault();
 
-        // -------------------------------------------------------------
-        // خلية "اسم المؤجر": بنثبّت على الرقم الوطني الموحد (700…) أو السجل التجاري (101…)
-        // والاسم بيكون فوقهم مباشرة، قبل عنوان "اسم المؤجر:" الواقع في أقصى اليمين.
-        // -------------------------------------------------------------
-        var unifiedNoWord = words.FirstOrDefault(w => Regex.IsMatch(w.Text, @"700\d{7}"));
-        var crWord = words.FirstOrDefault(w => Regex.IsMatch(w.Text, @"101\d{7}"));
+        var crWord = words
+            .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"101\d{7}"))
+            .OrderByDescending(w => w.BoundingBox.Bottom)
+            .FirstOrDefault();
+
+        // لو السجل التجاري مش 101…، خده من الصف اللي فوق الرقم الوطني الموحد مباشرة.
+        if (crWord == null && unifiedNoWord != null)
+        {
+            crWord = words
+                .Where(w => Regex.IsMatch(w.Text, @"^\d{10}$") &&
+                            w.BoundingBox.Bottom > unifiedNoWord.BoundingBox.Bottom + 8 &&
+                            w.BoundingBox.Bottom < unifiedNoWord.BoundingBox.Bottom + 30)
+                .OrderByDescending(w => w.BoundingBox.Bottom)
+                .FirstOrDefault();
+        }
+
         if (unifiedNoWord != null || crWord != null)
         {
             var anchor = crWord ?? unifiedNoWord!;
@@ -450,6 +692,28 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         if (vinWord == null)
             return new CertLayout(W, H, certNo, null, null, 0, cells);
+
+        //// -------------------------------------------------------------
+        //// خلية "اسم المؤجر": بنثبّت على الرقم الوطني الموحد (700…) أو السجل التجاري (101…)
+        //// والاسم بيكون فوقهم مباشرة، قبل عنوان "اسم المؤجر:" الواقع في أقصى اليمين.
+        //// -------------------------------------------------------------
+        //var unifiedNoWord = words.FirstOrDefault(w => Regex.IsMatch(w.Text, @"700\d{7}"));
+        //var crWord = words.FirstOrDefault(w => Regex.IsMatch(w.Text, @"101\d{7}"));
+        //if (unifiedNoWord != null || crWord != null)
+        //{
+        //    var anchor = crWord ?? unifiedNoWord!;
+        //    double refY = anchor.BoundingBox.Top;
+        //    cells["lessor"] = new CertCell("lessor", W * 0.60, W * 0.78, refY + 26, refY + 7);
+        //}
+
+        //var vinWord = words.FirstOrDefault(w =>
+        //{
+        //    var m = Regex.Match(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+        //    return m.Success && m.Value.Any(char.IsLetter) && m.Value.Any(char.IsDigit);
+        //});
+
+        //if (vinWord == null)
+        //    return new CertLayout(W, H, certNo, null, null, 0, cells);
 
         var vin = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}").Value;
         double vinBase = vinWord.Letters.Average(l => l.StartBaseLine.Y);
@@ -525,9 +789,26 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     var clusters = Cluster(hl, 10);
                     if (clusters.Count < 2) continue;
 
+                    // clusters[0] هو العنوان (أقصى اليمين)، والباقي هو القيمة على شماله.
+                    // بعض خطوط الشهادات بتخزّن قيمة الموديل كـ glyph واحد بعرض BBox صغير جداً،
+                    // فلو اقتصّينا على valueLetters.Max(X1) بس بنقصّ جزء من الكلمة (مثلاً "اكسنت" → "مت").
+                    // فبنمدّ الاقتصاص شمال العنوان بالكامل، مع ترك هامش صغير قبل العنوان.
                     var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
-                    cells[key] = new CertCell(key, valueLetters.Min(X0) - 5, valueLetters.Max(X1) + 5, topPdf, botPdf);
+                    double labelLeft = clusters[0].Min(X0);
+                    double minX = valueLetters.Min(X0) - 5;
+                    double maxX = Math.Max(valueLetters.Max(X1) + 5, labelLeft - 10);
+
+                    cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
                 }
+
+                //else
+                //{
+                //    var clusters = Cluster(hl, 10);
+                //    if (clusters.Count < 2) continue;
+
+                //    var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
+                //    cells[key] = new CertCell(key, valueLetters.Min(X0) - 5, valueLetters.Max(X1) + 5, topPdf, botPdf);
+                //}
             }
         }
 
@@ -544,9 +825,12 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (!lay.Cells.TryGetValue(key, out var c)) return Decision.Empty;
 
         var results = new List<(string Text, double Conf)>();
+        //var psms = isPlate
+        //    ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
+        //    : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord };
         var psms = isPlate
-            ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
-            : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord };
+       ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock }
+       : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord, PageSegMode.SparseText };
 
         engine.SetVariable("tessedit_char_whitelist", isPlate ? PlateAlphabet : "");
         int total = 0;
