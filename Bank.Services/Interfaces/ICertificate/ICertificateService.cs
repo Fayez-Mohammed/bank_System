@@ -21,8 +21,13 @@ public interface ICertificateService
     // ---------- للأدمن ----------
     Task<ApiResponse<CertificateSystemStatusDto>> GetSystemStatusAsync(bool liveCheck, CancellationToken ct = default);
     Task<ApiResponse<bool>> TriggerSyncAsync(CancellationToken ct = default);
-    Task<ApiResponse<RetryResultDto>> RetryAsync(Guid certificateId, CancellationToken ct = default);
-    /// <summary>includeStuck: يضيف كمان Pending/Processing العالقين من أكتر من ساعتين.</summary>
+    /// <summary>قايمة كاملة مسطّحة لتحديث الأسماء/المجلدات واكتشاف المحذوف (مفيش استخراج).</summary>
+    Task<ApiResponse<bool>> TriggerReconcileAsync(CancellationToken ct = default);
+    /// <summary>فحص تشخيصي لأسلوب اكتشاف Drive على الحساب المربوط.</summary>
+    Task<ApiResponse<DriveProbeDto>> ProbeDriveAsync(CancellationToken ct = default);
+    /// <summary>force: يسمح بإعادة الاستخراج على شهادة اتعدّلت يدوي (هيمسح التعديل).</summary>
+    Task<ApiResponse<RetryResultDto>> RetryAsync(Guid certificateId, bool force = false, CancellationToken ct = default);
+    /// <summary>includeStuck: يضيف كمان Processing العالقين من أكتر من ساعتين.</summary>
     Task<ApiResponse<RetryResultDto>> RetryFailedAsync(bool includeStuck = false, CancellationToken ct = default);
     Task<ApiResponse<CertificateDetailDto>> UpdateAsync(Guid certificateId, UpdateCertificateDto dto, CancellationToken ct = default);
 }

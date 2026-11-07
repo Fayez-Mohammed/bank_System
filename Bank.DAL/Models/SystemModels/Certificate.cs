@@ -39,4 +39,35 @@ public class Certificate : BaseEntity
     public string? StoragePath { get; set; }
     public DateTime DriveCreatedAt { get; set; }
     public bool IsManuallyEdited { get; set; }
+
+    // ===================== فهرس Drive (بيتملى من الـ Baseline / الـ Scan / الـ Changes) =====================
+
+    /// <summary>Historical = فهرسة بس (Status=Indexed). New = بيدخل خط الاستخراج.</summary>
+    public CertificateOrigin Origin { get; set; } = CertificateOrigin.New;
+
+    public string? ParentFolderId { get; set; }
+    public string? ParentFolderName { get; set; }
+    public long? SizeBytes { get; set; }
+    public DateTime? DriveModifiedAt { get; set; }
+
+    /// <summary>آخر مرة اتشافت فيها في قايمة Drive. بتستخدمها الـ Reconcile لاكتشاف المحذوف.</summary>
+    public DateTime? LastSeenAt { get; set; }
+
+    /// <summary>الملف اتمسح/اتنقل للسلة/اتشال الوصول عنه في Drive. بنخفيه من القوائم ومش بنعرضه.</summary>
+    public bool IsDeletedInDrive { get; set; }
+    public DateTime? DeletedInDriveAt { get; set; }
+
+    // ===================== خط الاستخراج (الـ DB هو الـ queue) =====================
+
+    /// <summary>عدد مرات الحجز من الـ worker (للـ retry التلقائي على الأخطاء المؤقتة).</summary>
+    public int AttemptCount { get; set; }
+
+    /// <summary>وقت حجز الـ worker للشهادة. اللي عدّى عليه وقت طويل = عالقة وبترجع Pending.</summary>
+    public DateTime? ProcessingStartedAt { get; set; }
+
+    /// <summary>أقرب وقت مسموح فيه بمحاولة تانية (backoff بعد خطأ مؤقت).</summary>
+    public DateTime? AvailableAt { get; set; }
+
+    public DateTime? ProcessedAt { get; set; }
+    public int? ExtractionDurationMs { get; set; }
 }

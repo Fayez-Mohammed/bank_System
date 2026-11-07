@@ -34,6 +34,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
     => Set<RecordingArchivePlate>();
  
     public DbSet<Certificate> Certificates => Set<Certificate>();
+    public DbSet<CertificateSyncState> CertificateSyncStates => Set<CertificateSyncState>();
     public DbSet<MapResult> MapResults => Set<MapResult>();
     public DbSet<MapUploadedFile> MapUploadedFiles => Set<MapUploadedFile>();
     public DbSet<MapUploadedPlateRow> MapUploadedPlateRows => Set<MapUploadedPlateRow>();
@@ -63,6 +64,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
 
         // أعمدة الـ geography (Location) محتاجة PostGIS
         modelBuilder.HasPostgresExtension("postgis");
+        // بحث الشهادات بالاسم/اللوحة (ILIKE '%..%') بـ GIN trigram index
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
@@ -164,4 +167,3 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid
 //        #endregion
 //    }
 //}
-

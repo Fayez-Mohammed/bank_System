@@ -14,7 +14,8 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {
     private const string DefaultConnection =
         "Host=localhost;Port=5432;Database=bank_system;Username=postgres;Password=fa1f7e9a6f65b77406e755396d660a14798dec4d206f7eed";
-
+    //private const string DefaultConnection =
+    //    "Host=localhost;Port=5432;Database=bank_system11new;Username=postgres;Password=0000";
     public AppDbContext CreateDbContext(string[] args)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

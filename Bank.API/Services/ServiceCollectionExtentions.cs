@@ -81,12 +81,13 @@ namespace Bank.API.Services
                 options.WorkerCount = 4;
             });
 
-            // مزامنة الشهادات + الـ OCR (كل ساعة). 2 = Certificates:OcrEngineCount الافتراضي
+            // مزامنة الشهادات (كل ٥ دقايق) + Reconcile يومي. الاستخراج/OCR بقى في CertificateExtractionWorker (مش Hangfire).
+            // الـ queue ده بيشغّل مهام المزامنة بس، فـ 2 workers كفاية.
             services.AddHangfireServer(options =>
             {
                 options.ServerName = "certificates";
                 options.Queues = new[] { "certificates" };
-                options.WorkerCount = 2;
+                options.WorkerCount = 4;
             });
 
             // الاستيراد والمطابقة (queue الـ bulk-import): بيشتغلوا واحد ورا التاني
@@ -136,8 +137,14 @@ namespace Bank.API.Services
             services.AddSingleton<IGoogleDriveClient, GoogleDriveClient>();     // Singleton: بدون DB، حالة الربط في الذاكرة
             services.AddSingleton<ICertificateExtractor, CertificateExtractor>(); // Singleton: Pool لمحركات OCR
             services.AddScoped<ICertificateService, CertificateService>();
+            services.AddSingleton(CertificateOptions.From(configuration));          // إعدادات + defaults مبنية على الجهاز
+            services.AddSingleton<ICertificateWorkGate, CertificateWorkGate>();     // إشارة المزامنة→worker + circuit breaker
+            services.AddScoped<CertificateIndexWriter>();
+            services.AddScoped<ICertificateSyncService, CertificateSyncService>();
+            services.AddScoped<CertificateExtractionProcessor>();
             services.AddScoped<CertificateSyncJob>();
-            services.AddScoped<CertificateExtractionJob>();
+            services.AddScoped<CertificateExtractionJob>();                         // legacy wrapper فقط
+            services.AddHostedService<Bank.API.BackgroundServices.CertificateExtractionWorker>();
             services.AddScoped<IMapService, MapService>();
             services.AddSingleton<IMemberLocationManager, MemberLocationManager>();
             services.AddScoped<IMemberLocationService, MemberLocationService>();
@@ -286,4 +293,3 @@ namespace Bank.API.Services
 
     }
 }
-

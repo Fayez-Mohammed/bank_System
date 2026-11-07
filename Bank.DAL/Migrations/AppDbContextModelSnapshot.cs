@@ -21,6 +21,7 @@ namespace Bank.DAL.Migrations
                 .HasAnnotation("ProductVersion", "10.0.10")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "postgis");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
@@ -235,6 +236,16 @@ namespace Bank.DAL.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("gen_random_uuid()");
 
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempt_count");
+
+                    b.Property<DateTime?>("AvailableAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("available_at");
+
                     b.Property<int>("BatchNo")
                         .HasColumnType("integer")
                         .HasColumnName("batch_no");
@@ -243,6 +254,10 @@ namespace Bank.DAL.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("color");
+
+                    b.Property<DateTime?>("DeletedInDriveAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_in_drive_at");
 
                     b.Property<DateTime>("DiscoveredAt")
                         .ValueGeneratedOnAdd()
@@ -260,17 +275,35 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("drive_file_id");
 
+                    b.Property<DateTime?>("DriveModifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("drive_modified_at");
+
+                    b.Property<int?>("ExtractionDurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("extraction_duration_ms");
+
                     b.Property<string>("FileName")
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
                         .HasColumnName("file_name");
 
+                    b.Property<bool>("IsDeletedInDrive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted_in_drive");
+
                     b.Property<bool>("IsManuallyEdited")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
                         .HasColumnName("is_manually_edited");
+
+                    b.Property<DateTime?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
 
                     b.Property<string>("Lessor")
                         .HasMaxLength(200)
@@ -292,6 +325,24 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(30)")
                         .HasColumnName("normalized_plate");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("New")
+                        .HasColumnName("origin");
+
+                    b.Property<string>("ParentFolderId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("parent_folder_id");
+
+                    b.Property<string>("ParentFolderName")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("parent_folder_name");
+
                     b.Property<string>("PlateDigits")
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)")
@@ -302,6 +353,14 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(10)")
                         .HasColumnName("plate_letters");
 
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.Property<DateTime?>("ProcessingStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processing_started_at");
+
                     b.Property<string>("Provider")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -309,6 +368,10 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(20)")
                         .HasDefaultValue("Sijil")
                         .HasColumnName("provider");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -332,14 +395,153 @@ namespace Bank.DAL.Migrations
 
                     b.HasIndex("BatchNo");
 
+                    b.HasIndex("DiscoveredAt");
+
                     b.HasIndex("DriveFileId")
                         .IsUnique();
 
-                    b.HasIndex("NormalizedPlate");
+                    b.HasIndex("FileName")
+                        .HasDatabaseName("IX_certificates_file_name_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("FileName"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("FileName"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex("NormalizedPlate")
+                        .HasDatabaseName("IX_certificates_normalized_plate_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("NormalizedPlate"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("NormalizedPlate"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex("ParentFolderId");
 
                     b.HasIndex("Status");
 
+                    b.HasIndex("BatchNo", "DriveCreatedAt")
+                        .HasDatabaseName("IX_certificates_pending_queue")
+                        .HasFilter("status = 'Pending'");
+
                     b.ToTable("certificates", (string)null);
+                });
+
+            modelBuilder.Entity("Bank.DAL.Models.SystemModels.CertificateSyncState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("BaselineCompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("baseline_completed_at");
+
+                    b.Property<int>("BaselineFilesSeen")
+                        .HasColumnType("integer")
+                        .HasColumnName("baseline_files_seen");
+
+                    b.Property<int>("BaselineIndexedHistorical")
+                        .HasColumnType("integer")
+                        .HasColumnName("baseline_indexed_historical");
+
+                    b.Property<string>("BaselinePageToken")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("baseline_page_token");
+
+                    b.Property<int>("BaselinePagesDone")
+                        .HasColumnType("integer")
+                        .HasColumnName("baseline_pages_done");
+
+                    b.Property<int>("BaselineQueuedNew")
+                        .HasColumnType("integer")
+                        .HasColumnName("baseline_queued_new");
+
+                    b.Property<DateTime?>("BaselineStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("baseline_started_at");
+
+                    b.Property<string>("BaselineStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("NotStarted")
+                        .HasColumnName("baseline_status");
+
+                    b.Property<string>("ChangesPageToken")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("changes_page_token");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTime?>("LastReconcileAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_reconcile_at");
+
+                    b.Property<int>("LastReconcileMarkedDeleted")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_reconcile_marked_deleted");
+
+                    b.Property<int>("LastSyncAlreadyIndexed")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_already_indexed");
+
+                    b.Property<DateTime?>("LastSyncCompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_sync_completed_at");
+
+                    b.Property<int>("LastSyncDriveRequests")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_drive_requests");
+
+                    b.Property<int>("LastSyncDurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_duration_ms");
+
+                    b.Property<int>("LastSyncFilesListed")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_files_listed");
+
+                    b.Property<int>("LastSyncIndexedHistorical")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_indexed_historical");
+
+                    b.Property<string>("LastSyncKind")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("last_sync_kind");
+
+                    b.Property<int>("LastSyncNewFiles")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_new_files");
+
+                    b.Property<int>("LastSyncRemoved")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_sync_removed");
+
+                    b.Property<DateTime?>("LastSyncStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_sync_started_at");
+
+                    b.Property<DateTime?>("ScanWatermark")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scan_watermark");
+
+                    b.Property<long>("TotalDriveRequests")
+                        .HasColumnType("bigint")
+                        .HasColumnName("total_drive_requests");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("certificate_sync_state", (string)null);
                 });
 
             modelBuilder.Entity("Bank.DAL.Models.SystemModels.CheckFile", b =>

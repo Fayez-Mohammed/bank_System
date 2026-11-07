@@ -148,10 +148,14 @@ namespace Bank
             {
                 Authorization = new[] { new HangfireAuthorizationFilter() }
             });
-            RecurringJob.AddOrUpdate<CertificateSyncJob>(
-                "certificate-sync",
-                job => job.SyncAsync(CancellationToken.None),
-                app.Configuration["Certificates:SyncCron"] ?? "0 * * * *");
+            //RecurringJob.AddOrUpdate<CertificateSyncJob>(
+            //    "certificate-sync",
+            //    job => job.SyncAsync(CancellationToken.None),
+            //    app.Configuration["Certificates:SyncCron"] ?? "0 * * * *");
+            RecurringJob.AddOrUpdate<CertificateSyncJob>("certificate-sync",
+    j => j.SyncAsync(CancellationToken.None), app.Configuration["Certificates:SyncCron"] ?? "*/5 * * * *");
+            RecurringJob.AddOrUpdate<CertificateSyncJob>("certificate-reconcile",
+                j => j.ReconcileAsync(CancellationToken.None), app.Configuration["Certificates:ReconcileCron"] ?? "0 3 * * *");
             RecurringJob.AddOrUpdate<SubscriptionExpiryJob>(
                 "subscription-expiry-warning",
                 job => job.RunAsync(CancellationToken.None),

@@ -32,6 +32,7 @@ public class CertificateService : ICertificateService
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<CertificateService> _logger;
     private readonly IPermissionService _permissions;
+    private readonly ICertificateWorkGate _workGate;
 
     public CertificateService(
         AppDbContext db,
@@ -39,7 +40,8 @@ public class CertificateService : ICertificateService
         IFileStorageService storage,
         IBackgroundJobClient jobs,
         ILogger<CertificateService> logger,
-        IPermissionService permissions)
+        IPermissionService permissions,
+        ICertificateWorkGate workGate)
     {
         _db = db;
         _drive = drive;
@@ -47,7 +49,15 @@ public class CertificateService : ICertificateService
         _jobs = jobs;
         _logger = logger;
         _permissions = permissions;
+        _workGate = workGate;
     }
+
+    /// <summary>آخر دفعة حقيقية. الملفات التاريخية (BatchNo = 0) مش دفعات.</summary>
+    private async Task<int?> LatestBatchNoAsync(CancellationToken ct) =>
+        await _db.Certificates.Where(c => c.BatchNo > 0).MaxAsync(c => (int?)c.BatchNo, ct);
+
+    private static string EscapeLike(string s) =>
+        s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
     // =====================================================================
     //  List / Detail
@@ -55,7 +65,14 @@ public class CertificateService : ICertificateService
     public async Task<ApiResponse<PagedResult<CertificateListItemDto>>> ListAsync(
         CertificateQueryDto query, CancellationToken ct = default)
     {
-        IQueryable<Certificate> q = _db.Certificates.AsNoTracking();
+        // الملفات اللي اتمسحت من Drive مش بتظهر (مش هينفع تتعرض أو تتنزّل).
+        IQueryable<Certificate> q = _db.Certificates.AsNoTracking().Where(c => !c.IsDeletedInDrive);
+
+        if (!string.IsNullOrWhiteSpace(query.Origin) &&
+            Enum.TryParse<CertificateOrigin>(query.Origin, true, out var origin))
+        {
+            q = q.Where(c => c.Origin == origin);
+        }
 
         if (query.BatchNo.HasValue)
         {
@@ -68,7 +85,7 @@ public class CertificateService : ICertificateService
             {
                 case "latest-batch":
                     {
-                        var latest = await _db.Certificates.MaxAsync(c => (int?)c.BatchNo, ct);
+                        var latest = await LatestBatchNoAsync(ct);
                         if (latest == null) return ApiResponse<PagedResult<CertificateListItemDto>>.SuccessResponse(EmptyPage(query));
                         q = q.Where(c => c.BatchNo == latest);
                         break;
@@ -78,7 +95,8 @@ public class CertificateService : ICertificateService
                         var offset = TimeSpan.FromMinutes(Math.Clamp(query.TzOffsetMinutes ?? 180, -840, 840));
                         var startUtc = (DateTime.UtcNow + offset).Date - offset;
                         var endUtc = startUtc.AddDays(1);
-                        q = q.Where(c => c.DiscoveredAt >= startUtc && c.DiscoveredAt < endUtc);
+                        // "النهاردة" = الشهادات الجديدة اللي اتكتشفت النهاردة (مش الأرشيف اللي اتفهرس في الـ Baseline).
+                        q = q.Where(c => c.Origin == CertificateOrigin.New && c.DiscoveredAt >= startUtc && c.DiscoveredAt < endUtc);
                         break;
                     }
             }
@@ -97,9 +115,14 @@ public class CertificateService : ICertificateService
             var plate = PlateNormalizer.Normalize(term);
             var searchPlate = plate.Length >= 3;
 
+            // ILIKE '%..%' بيستخدم GIN trigram indexes (IX_certificates_file_name_trgm / _normalized_plate_trgm).
+            // الـ Contains(ToLower()) القديمة كانت بتعمل Seq Scan على الجدول كله.
+            var namePattern = "%" + EscapeLike(term) + "%";
+            var platePattern = "%" + EscapeLike(plate) + "%";
+
             q = q.Where(c =>
-                c.FileName.ToLower().Contains(term.ToLower()) ||
-                (searchPlate && c.NormalizedPlate != null && c.NormalizedPlate.Contains(plate)));
+                EF.Functions.ILike(c.FileName, namePattern) ||
+                (searchPlate && c.NormalizedPlate != null && EF.Functions.ILike(c.NormalizedPlate, platePattern)));
         }
 
         var total = await q.CountAsync(ct);
@@ -112,14 +135,16 @@ public class CertificateService : ICertificateService
             .Select(c => new
             {
                 c.Id, c.FileName, c.PlateLetters, c.PlateDigits, c.NormalizedPlate,
-                c.Make, c.Model, c.Color, c.Lessor, c.Status, c.BatchNo, c.DiscoveredAt,c.DriveCreatedAt
+                c.Make, c.Model, c.Color, c.Lessor, c.Status, c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt,
+                c.Origin, c.ParentFolderName
             })
             .ToListAsync(ct);
 
         var items = rows.Select(c => new CertificateListItemDto(
             c.Id, c.FileName, PlateText.Display(c.PlateLetters, c.PlateDigits), c.NormalizedPlate,
             c.Make, c.Model, c.Color, c.Lessor, c.Status.ToString(),
-            c.Status == CertificateStatus.NeedsReview, c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt)).ToList();
+            c.Status == CertificateStatus.NeedsReview, c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt,
+            c.Origin.ToString(), c.ParentFolderName)).ToList();
 
         return ApiResponse<PagedResult<CertificateListItemDto>>.SuccessResponse(new PagedResult<CertificateListItemDto>
         {
@@ -140,14 +165,16 @@ public class CertificateService : ICertificateService
 
     private async Task<CertificateDetailDto?> LoadDetailAsync(Guid certificateId, CancellationToken ct)
     {
-        var c = await _db.Certificates.AsNoTracking().FirstOrDefaultAsync(x => x.Id == certificateId, ct);
+        var c = await _db.Certificates.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == certificateId && !x.IsDeletedInDrive, ct);
         if (c == null) return null;
 
         return new CertificateDetailDto(
             c.Id, c.FileName, c.Provider.ToString(), c.PlateLetters, c.PlateDigits,
             PlateText.Display(c.PlateLetters, c.PlateDigits), c.NormalizedPlate,
             c.Make, c.Model, c.Color, c.Lessor, c.Status.ToString(), c.StatusNote,
-            c.IsManuallyEdited, !string.IsNullOrEmpty(c.StoragePath), c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt);
+            c.IsManuallyEdited, !string.IsNullOrEmpty(c.StoragePath), c.BatchNo, c.DiscoveredAt, c.DriveCreatedAt,
+            c.Origin.ToString(), c.ParentFolderId, c.ParentFolderName, c.SizeBytes, c.DriveModifiedAt, c.AttemptCount);
     }
 
     //// =====================================================================
@@ -171,9 +198,12 @@ public class CertificateService : ICertificateService
     public async Task<ApiResponse<PagedResult<CertificateBatchDto>>> ListBatchesAsync(
     PaginationParams pagination, CancellationToken ct = default)
     {
-        var total = await _db.Certificates.AsNoTracking().Select(c => c.BatchNo).Distinct().CountAsync(ct);
+        // BatchNo = 0 هو الأرشيف التاريخي (فهرسة بس)، مش دفعة.
+        var total = await _db.Certificates.AsNoTracking().Where(c => c.BatchNo > 0 && !c.IsDeletedInDrive)
+            .Select(c => c.BatchNo).Distinct().CountAsync(ct);
 
         var rows = await _db.Certificates.AsNoTracking()
+            .Where(c => c.BatchNo > 0 && !c.IsDeletedInDrive)
             .GroupBy(c => c.BatchNo)
             .OrderByDescending(g => g.Key)                       // order + page BEFORE projecting
             .Skip((pagination.PageNumber - 1) * pagination.PageSize)
@@ -203,11 +233,11 @@ public class CertificateService : ICertificateService
     }
     public async Task<ApiResponse<CertificateBatchDto?>> GetLatestBatchAsync(CancellationToken ct = default)
     {
-        var latest = await _db.Certificates.MaxAsync(c => (int?)c.BatchNo, ct);
+        var latest = await LatestBatchNoAsync(ct);
         if (latest == null) return ApiResponse<CertificateBatchDto?>.SuccessResponse(null);   // no batches yet
 
         var b = await _db.Certificates.AsNoTracking()
-            .Where(c => c.BatchNo == latest)
+            .Where(c => c.BatchNo == latest && !c.IsDeletedInDrive)
             .GroupBy(c => c.BatchNo)
             .Select(g => new
             {
@@ -232,13 +262,15 @@ public class CertificateService : ICertificateService
     {
         var cert = await _db.Certificates.AsNoTracking()
             .Where(c => c.Id == certificateId)
-            .Select(c => new { c.FileName, c.StoragePath, c.DriveFileId })
+            .Select(c => new { c.FileName, c.StoragePath, c.DriveFileId, c.IsDeletedInDrive })
             .FirstOrDefaultAsync(ct);
 
         if (cert == null) throw new KeyNotFoundException("الشهادة غير موجودة.");
+        if (cert.IsDeletedInDrive) throw new KeyNotFoundException("الملف اتمسح من Drive.");
 
         var fileName = cert.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? cert.FileName : cert.FileName + ".pdf";
 
+        // نسخة محلية قديمة (من قبل التغيير) لو لسه موجودة، غير كده Drive مباشرة.
         if (!string.IsNullOrEmpty(cert.StoragePath))
         {
             try
@@ -252,19 +284,29 @@ public class CertificateService : ICertificateService
             }
         }
 
-        // مفيش نسخة محلية: نجيبها من Drive مباشرة
-        var ms = new MemoryStream();
+        // Stream مباشر من Drive للمستخدم: من غير حفظ على السيرفر ومن غير تحميل الملف كله في الذاكرة.
         try
         {
-            await _drive.DownloadAsync(cert.DriveFileId, ms, ct);
+            var stream = await _drive.OpenReadAsync(cert.DriveFileId, ct);
+            return (stream, fileName);
+        }
+        catch (DriveFileNotFoundException)
+        {
+            // اتمسح من Drive قبل ما الـ Reconcile يلحق يلاحظ: نخفيه من دلوقتي.
+            await _db.Certificates.Where(c => c.Id == certificateId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.IsDeletedInDrive, true)
+                    .SetProperty(c => c.DeletedInDriveAt, DateTime.UtcNow), CancellationToken.None);
+            throw new KeyNotFoundException("الملف مش موجود في Drive.");
         }
         catch (DriveAuthException ex)
         {
-            ms.Dispose();
             throw new KeyNotFoundException("الملف مش متاح دلوقتي: " + ex.Message);
         }
-        ms.Position = 0;
-        return (ms, fileName);
+        catch (DriveThrottledException)
+        {
+            throw new KeyNotFoundException("Drive مشغول دلوقتي (حد الطلبات). جرّب بعد شوية.");
+        }
     }
 
     // =====================================================================
@@ -283,12 +325,12 @@ public class CertificateService : ICertificateService
         var sortDenied = await _permissions.GetSortDeniedReasonAsync(currentUserId, ct);
         if (sortDenied is not null) return ApiResponse<CertificateSortResultDto>.Fail(sortDenied, null, 403);
 
-        var batchNo = request.BatchNo ?? await _db.Certificates.MaxAsync(c => (int?)c.BatchNo, ct);
-        if (batchNo == null)
+        var batchNo = request.BatchNo ?? await LatestBatchNoAsync(ct);
+        if (batchNo == null || batchNo <= 0)
             return ApiResponse<CertificateSortResultDto>.Fail("مفيش دفعات شهادات لسه.", null, 404);
 
         var certs = await _db.Certificates.AsNoTracking()
-            .Where(c => c.BatchNo == batchNo)
+            .Where(c => c.BatchNo == batchNo && !c.IsDeletedInDrive)
             .OrderBy(c => c.FileName)
             .Select(c => new
             {
@@ -418,12 +460,37 @@ public class CertificateService : ICertificateService
             .ToListAsync(ct);
         int Count(CertificateStatus s) => counts.Where(x => x.Key == s).Select(x => x.N).FirstOrDefault();
 
-        var latest = await _db.Certificates.MaxAsync(c => (int?)c.BatchNo, ct) ?? 0;
+        var latest = await LatestBatchNoAsync(ct) ?? 0;
+        var sync = await _db.CertificateSyncStates.AsNoTracking().FirstOrDefaultAsync(ct);
+        var deleted = await _db.Certificates.CountAsync(c => c.IsDeletedInDrive, ct);
+
+        var hourAgo = DateTime.UtcNow.AddHours(-1);
+        var lastHour = await _db.Certificates.AsNoTracking()
+            .Where(c => c.ProcessedAt >= hourAgo && c.ExtractionDurationMs != null)
+            .GroupBy(_ => 1)
+            .Select(g => new { N = g.Count(), Avg = g.Average(c => (double)c.ExtractionDurationMs!.Value) })
+            .FirstOrDefaultAsync(ct);
 
         return ApiResponse<CertificateSystemStatusDto>.SuccessResponse(new CertificateSystemStatusDto(
             _drive.IsConfigured, driveState, email, state.LastSyncAt, state.LastSyncNewFiles, lastError, latest,
             Count(CertificateStatus.Pending), Count(CertificateStatus.Processing), Count(CertificateStatus.Extracted),
-            Count(CertificateStatus.NeedsReview), Count(CertificateStatus.Failed)));
+            Count(CertificateStatus.NeedsReview), Count(CertificateStatus.Failed),
+            Indexed: Count(CertificateStatus.Indexed),
+            DeletedInDrive: deleted,
+            BaselineStatus: (sync?.BaselineStatus ?? CertificateBaselineStatus.NotStarted).ToString(),
+            BaselineFilesSeen: sync?.BaselineFilesSeen ?? 0,
+            BaselineStartedAt: sync?.BaselineStartedAt,
+            BaselineCompletedAt: sync?.BaselineCompletedAt,
+            LastSyncKind: sync?.LastSyncKind,
+            LastSyncFilesListed: sync?.LastSyncFilesListed ?? 0,
+            LastSyncAlreadyIndexed: sync?.LastSyncAlreadyIndexed ?? 0,
+            LastSyncIndexedHistorical: sync?.LastSyncIndexedHistorical ?? 0,
+            LastSyncDriveRequests: sync?.LastSyncDriveRequests ?? 0,
+            LastSyncDurationMs: sync?.LastSyncDurationMs ?? 0,
+            TotalDriveRequests: sync?.TotalDriveRequests ?? 0,
+            ExtractedLastHour: lastHour?.N ?? 0,
+            AvgExtractionMsLastHour: lastHour == null ? null : (int)lastHour.Avg,
+            ExtractionPausedUntil: _workGate.TrippedUntil));
     }
 
     public Task<ApiResponse<bool>> TriggerSyncAsync(CancellationToken ct = default)
@@ -436,16 +503,51 @@ public class CertificateService : ICertificateService
         return Task.FromResult(ApiResponse<bool>.SuccessResponse(true, "بدأت المزامنة في الخلفية.", 202));
     }
 
-    public async Task<ApiResponse<RetryResultDto>> RetryAsync(Guid certificateId, CancellationToken ct = default)
+    public Task<ApiResponse<bool>> TriggerReconcileAsync(CancellationToken ct = default)
     {
-        var status = await _db.Certificates.AsNoTracking()
+        if (!_drive.IsConfigured)
+            return Task.FromResult(ApiResponse<bool>.Fail(
+                "إعدادات Google Drive ناقصة (ClientId / ClientSecret / RefreshToken).", null, 409));
+
+        _jobs.Enqueue<CertificateSyncJob>(j => j.ReconcileAsync(CancellationToken.None));
+        return Task.FromResult(ApiResponse<bool>.SuccessResponse(true, "بدأ الـ Reconcile في الخلفية.", 202));
+    }
+
+    public async Task<ApiResponse<DriveProbeDto>> ProbeDriveAsync(CancellationToken ct = default)
+    {
+        if (!_drive.IsConfigured)
+            return ApiResponse<DriveProbeDto>.SuccessResponse(new DriveProbeDto(
+                false, null, false, 0, false, 0, new List<string>(), "إعدادات Google Drive ناقصة."));
+        try
+        {
+            var p = await _drive.ProbeAsync(ct);
+            return ApiResponse<DriveProbeDto>.SuccessResponse(new DriveProbeDto(
+                true, p.AccountEmail, p.ChangesTokenOk, p.FlatPdfFirstPageCount, p.FlatPdfHasMorePages,
+                p.SharedWithMeTopLevelCount, p.SampleFileNames, null));
+        }
+        catch (Exception ex) when (ex is DriveAuthException or DriveThrottledException)
+        {
+            return ApiResponse<DriveProbeDto>.SuccessResponse(new DriveProbeDto(
+                true, null, false, 0, false, 0, new List<string>(), ex.Message));
+        }
+    }
+
+    public async Task<ApiResponse<RetryResultDto>> RetryAsync(Guid certificateId, bool force = false, CancellationToken ct = default)
+    {
+        var cert = await _db.Certificates.AsNoTracking()
             .Where(c => c.Id == certificateId)
-            .Select(c => (CertificateStatus?)c.Status)
+            .Select(c => new { c.Status, c.Origin, c.IsManuallyEdited, c.IsDeletedInDrive })
             .FirstOrDefaultAsync(ct);
 
-        if (status == null) return ApiResponse<RetryResultDto>.Fail("الشهادة غير موجودة.", null, 404);
-        if (status == CertificateStatus.Processing)
+        if (cert == null || cert.IsDeletedInDrive) return ApiResponse<RetryResultDto>.Fail("الشهادة غير موجودة.", null, 404);
+        if (cert.Status == CertificateStatus.Processing)
             return ApiResponse<RetryResultDto>.Fail("الشهادة قيد المعالجة دلوقتي.", null, 409);
+        if (cert.Origin == CertificateOrigin.Historical)
+            return ApiResponse<RetryResultDto>.Fail("دي شهادة من الأرشيف التاريخي (فهرسة بس) ومفيهاش استخراج.", null, 409);
+        // إعادة الاستخراج بتكتب فوق التعديل اليدوي: لازم تأكيد صريح.
+        if (cert.IsManuallyEdited && !force)
+            return ApiResponse<RetryResultDto>.Fail(
+                "الشهادة اتعدّلت يدوي وإعادة الاستخراج هتمسح التعديل. ابعت force=true لو عايز كده فعلاً.", null, 409);
 
         await RequeueAsync(new List<Guid> { certificateId }, ct);
         return ApiResponse<RetryResultDto>.SuccessResponse(new RetryResultDto(1), "اتضافت للمعالجة من جديد.");
@@ -454,12 +556,13 @@ public class CertificateService : ICertificateService
     public async Task<ApiResponse<RetryResultDto>> RetryFailedAsync(bool includeStuck, CancellationToken ct = default)
     {
         // Failed دايماً. وبشكل اختياري: Pending/Processing عالقين من أكتر من ساعتين (مثلاً بعد إعادة تشغيل السيرفر).
+        // Pending طبيعي (ده الـ queue) فمش بنعتبره عالق. العالق الحقيقي = Processing من أكتر من ساعتين.
         var stuckBefore = DateTime.UtcNow.AddHours(-2);
         var ids = await _db.Certificates.AsNoTracking()
-            .Where(c => c.Status == CertificateStatus.Failed ||
-                        (includeStuck
-                         && (c.Status == CertificateStatus.Pending || c.Status == CertificateStatus.Processing)
-                         && c.DiscoveredAt < stuckBefore))
+            .Where(c => c.Origin == CertificateOrigin.New && !c.IsDeletedInDrive && !c.IsManuallyEdited &&
+                        (c.Status == CertificateStatus.Failed ||
+                         (includeStuck && c.Status == CertificateStatus.Processing
+                          && (c.ProcessingStartedAt == null || c.ProcessingStartedAt < stuckBefore))))
             .Select(c => c.Id)
             .Take(5000)
             .ToListAsync(ct);
@@ -479,20 +582,20 @@ public class CertificateService : ICertificateService
             await _db.Certificates.Where(c => chunk.Contains(c.Id))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(c => c.Status, CertificateStatus.Pending)
-                    .SetProperty(c => c.StatusNote, (string?)null), ct);
+                    .SetProperty(c => c.StatusNote, (string?)null)
+                    .SetProperty(c => c.AttemptCount, 0)
+                    .SetProperty(c => c.AvailableAt, (DateTime?)null)
+                    .SetProperty(c => c.ProcessingStartedAt, (DateTime?)null), ct);
         }
 
-        foreach (var id in ids)
-        {
-            var certId = id;
-            _jobs.Enqueue<CertificateExtractionJob>(j => j.ExtractAsync(certId, CancellationToken.None));
-        }
+        // الـ DB هو الـ queue: مفيش Job لكل شهادة. نصحّي الـ worker بس.
+        _workGate.Signal();
     }
 
     public async Task<ApiResponse<CertificateDetailDto>> UpdateAsync(
         Guid certificateId, UpdateCertificateDto dto, CancellationToken ct = default)
     {
-        var cert = await _db.Certificates.FirstOrDefaultAsync(c => c.Id == certificateId, ct);
+        var cert = await _db.Certificates.FirstOrDefaultAsync(c => c.Id == certificateId && !c.IsDeletedInDrive, ct);
         if (cert == null) return ApiResponse<CertificateDetailDto>.Fail("الشهادة غير موجودة.", null, 404);
         if (cert.Status == CertificateStatus.Processing)
             return ApiResponse<CertificateDetailDto>.Fail("الشهادة قيد المعالجة دلوقتي.", null, 409);

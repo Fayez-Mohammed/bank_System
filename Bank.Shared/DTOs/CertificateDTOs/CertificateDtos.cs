@@ -15,6 +15,7 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         public int? BatchNo { get; set; }
         public string? Status { get; set; }           // Pending | Processing | Extracted | NeedsReview | Failed
         public int? TzOffsetMinutes { get; set; }     // لحساب "اليوم" بتوقيت المستخدم (الافتراضي 180)
+        public string? Origin { get; set; }           // New | Historical (الافتراضي: الاتنين)
     }
 
     public record CertificateListItemDto(
@@ -30,7 +31,9 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         bool NeedsReview,
         int BatchNo,
         DateTime AddedAt,
-        DateTime DriveCreatedAt);
+        DateTime DriveCreatedAt,
+        string Origin = "New",                 // New | Historical (Historical = Status Indexed: بحث/عرض/تنزيل بس)
+        string? ParentFolderName = null);
 
     public record CertificateDetailDto(
         Guid Id,
@@ -50,7 +53,13 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         bool HasLocalCopy,
         int BatchNo,
         DateTime AddedAt,
-        DateTime DriveCreatedAt);
+        DateTime DriveCreatedAt,
+        string Origin = "New",
+        string? ParentFolderId = null,
+        string? ParentFolderName = null,
+        long? SizeBytes = null,
+        DateTime? DriveModifiedAt = null,
+        int AttemptCount = 0);
 
     // ============================ الدفعات ============================
 
@@ -109,5 +118,33 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         int Processing,
         int Extracted,
         int NeedsReview,
-        int Failed);
+        int Failed,
+        // ---- إضافات (كلها اختيارية عشان العقد القديم يفضل شغال) ----
+        int Indexed = 0,                       // ملفات تاريخية متفهرسة (من غير استخراج)
+        int DeletedInDrive = 0,
+        string BaselineStatus = "NotStarted",  // NotStarted | Running | Completed
+        int BaselineFilesSeen = 0,
+        DateTime? BaselineStartedAt = null,
+        DateTime? BaselineCompletedAt = null,
+        string? LastSyncKind = null,           // Baseline | Incremental | Reconcile
+        int LastSyncFilesListed = 0,
+        int LastSyncAlreadyIndexed = 0,
+        int LastSyncIndexedHistorical = 0,
+        int LastSyncDriveRequests = 0,
+        int LastSyncDurationMs = 0,
+        long TotalDriveRequests = 0,
+        int ExtractedLastHour = 0,
+        int? AvgExtractionMsLastHour = null,
+        DateTime? ExtractionPausedUntil = null);   // الـ worker واقف مؤقتاً (Drive auth / quota)
+
+    /// <summary>نتيجة فحص تشخيصي لإعداد Drive (بيأكد إن القايمة المسطّحة والـ Changes API شغالين على الحساب ده).</summary>
+    public record DriveProbeDto(
+        bool Configured,
+        string? AccountEmail,
+        bool ChangesTokenOk,
+        int FlatPdfFirstPageCount,
+        bool FlatPdfHasMorePages,
+        int SharedWithMeTopLevelCount,
+        List<string> SampleFileNames,
+        string? Error);
 }
