@@ -151,7 +151,12 @@ namespace Bank
             RecurringJob.AddOrUpdate<CertificateSyncJob>(
                 "certificate-sync",
                 job => job.SyncAsync(CancellationToken.None),
-                app.Configuration["Certificates:SyncCron"] ?? "0 * * * *");
+                app.Configuration["Certificates:SyncCron"] ?? "*/5 * * * *");
+            // طابور الاستخراج: يرجّع الشهادات اللي الـ worker بتاعها مات، ويصحّي workers لو في Pending مستني
+            RecurringJob.AddOrUpdate<CertificateExtractionJob>(
+                "certificate-extraction-pump",
+                job => job.PumpAsync(CancellationToken.None),
+                Cron.Minutely);
             RecurringJob.AddOrUpdate<SubscriptionExpiryJob>(
                 "subscription-expiry-warning",
                 job => job.RunAsync(CancellationToken.None),

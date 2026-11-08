@@ -29,8 +29,8 @@ public class CertificatesController : ControllerBase
     private Guid CurrentUserId => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     /// <summary>
-    /// GET api/certificates?scope=latest-batch|today|all&amp;batchNo=&amp;searchTerm=&amp;status=&amp;pageNumber=&amp;pageSize=
-    /// البحث: اسم الملف أو رقم اللوحة (مثال: ابم7263).
+    /// GET api/certificates?scope=latest-batch|today|all&amp;batchNo=&amp;searchTerm=&amp;status=&amp;includeHistorical=&amp;pageNumber=&amp;pageSize=
+    /// البحث: اسم الملف أو رقم اللوحة (مثال: ابم7263). البحث بيشمل كمان الملفات القديمة (Indexed) اللي ماتعملهاش استخراج.
     /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<PagedResult<CertificateListItemDto>>), 200)]
@@ -92,8 +92,10 @@ public class CertificatesController : ControllerBase
     {
         try
         {
-            var (stream, _) = await _certificateService.OpenFileAsync(id, cancellationToken);
-            return File(stream, "application/pdf");
+            // Stream مباشر من Drive للمتصفح (مفيش نسخة على السيرفر). الـ stream بيتقفل لوحده بعد الإرسال.
+            var file = await _certificateService.OpenFileAsync(id, cancellationToken);
+            if (file.Length.HasValue) Response.ContentLength = file.Length;
+            return File(file.Stream, "application/pdf");
         }
         catch (KeyNotFoundException ex)
         {
@@ -110,8 +112,9 @@ public class CertificatesController : ControllerBase
     {
         try
         {
-            var (stream, fileName) = await _certificateService.OpenFileAsync(id, cancellationToken);
-            return File(stream, "application/pdf", fileName);
+            var file = await _certificateService.OpenFileAsync(id, cancellationToken);
+            if (file.Length.HasValue) Response.ContentLength = file.Length;
+            return File(file.Stream, "application/pdf", file.FileName);
         }
         catch (KeyNotFoundException ex)
         {

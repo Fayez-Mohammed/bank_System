@@ -93,6 +93,9 @@ services:
       AiService__ApiKey: ${AI_API_KEY:-}
       LiveCheckAi__WebSocketUrl: ${AI_WS_URL:-ws://host.docker.internal:8000/ws/live-check}
       FileStorage__RootPath: /data/storage
+      # Tesseract: thread واحد لكل محرك (التوازي من Certificates:OcrEngineCount / ExtractionWorkers)،
+      # عشان OpenMP مايفتحش threads زيادة فوق بعض.
+      OMP_THREAD_LIMIT: "1"
     extra_hosts:
       # lets the default AI address above reach an AI server running on the Docker host (Linux needs this)
       - "host.docker.internal:host-gateway"
