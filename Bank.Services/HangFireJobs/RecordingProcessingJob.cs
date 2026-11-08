@@ -141,7 +141,7 @@ public class RecordingProcessingJob
             //    .FirstOrDefaultAsync(cancellationToken);
 
             var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
-                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District,session.DisplayName/* session.Street*/, p.Notes,
+                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District,/*session.DisplayName*/ session.Street, p.Notes,
                 LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched)).ToList();
 
             await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);
