@@ -55,6 +55,9 @@ namespace Bank.API.Services
                     new PostgreSqlStorageOptions
                     {
                         InvisibilityTimeout = TimeSpan.FromMinutes(30),
+                        // من غيرها: أي job شغال أكتر من 30 دقيقة Hangfire بيفتكره مات ويديه لـ worker تاني (بيتنفذ مرتين).
+                        // معاها: الـ server بيجدد الوقت طول ما الـ job شغال، والـ 30 دقيقة بتبقى بس للـ server اللي مات فعلاً.
+                        UseSlidingInvisibilityTimeout = true,
                         QueuePollInterval = TimeSpan.FromSeconds(1),
                         PrepareSchemaIfNecessary = true
                     }));
@@ -81,12 +84,23 @@ namespace Bank.API.Services
                 options.WorkerCount = 4;
             });
 
-            // مزامنة الشهادات + الـ OCR (كل ساعة). 2 = Certificates:OcrEngineCount الافتراضي
+            // مزامنة Drive للشهادات: منفصلة عن الاستخراج، عشان المزامنة عمرها ماتحجز worker استخراج.
+            // 2 = تشغيل مزامنة واحد (عليه قفل) + الـ pump بتاع الطابور كل دقيقة.
+            services.AddHangfireServer(options =>
+            {
+                options.ServerName = "certificate-sync";
+                options.Queues = new[] { CertificateSyncJob.SyncQueue };
+                options.WorkerCount = 2;
+            });
+
+            // استخراج الشهادات الجديدة: كل worker = drain job بيسحب من جدول certificates (Pending).
+            // ده الحد الأقصى الحقيقي للتوازي؛ التوازي جوه الشهادة (حقول OCR) محكوم بـ Certificates:OcrEngineCount.
             services.AddHangfireServer(options =>
             {
                 options.ServerName = "certificates";
-                options.Queues = new[] { "certificates" };
-                options.WorkerCount = 2;
+                options.Queues = new[] { CertificateExtractionQueue.QueueName };
+                options.WorkerCount = CertificateExtractionQueue.ReadInt(
+                    configuration, "Certificates:ExtractionWorkers", 6, 1, 64);
             });
 
             // الاستيراد والمطابقة (queue الـ bulk-import): بيشتغلوا واحد ورا التاني
@@ -136,6 +150,8 @@ namespace Bank.API.Services
             services.AddSingleton<IGoogleDriveClient, GoogleDriveClient>();     // Singleton: بدون DB، حالة الربط في الذاكرة
             services.AddSingleton<ICertificateExtractor, CertificateExtractor>(); // Singleton: Pool لمحركات OCR
             services.AddScoped<ICertificateService, CertificateService>();
+            services.AddScoped<CertificateIndexStore>();
+            services.AddScoped<CertificateExtractionQueue>();
             services.AddScoped<CertificateSyncJob>();
             services.AddScoped<CertificateExtractionJob>();
             services.AddScoped<IMapService, MapService>();

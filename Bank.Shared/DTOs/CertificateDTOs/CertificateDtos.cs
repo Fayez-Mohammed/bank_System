@@ -13,8 +13,13 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         /// <summary>latest-batch (أحدث دفعة) | today (اليوم) | all (الافتراضي). بيتجاهل لو BatchNo اتحدد.</summary>
         public string? Scope { get; set; }
         public int? BatchNo { get; set; }
-        public string? Status { get; set; }           // Pending | Processing | Extracted | NeedsReview | Failed
+        public string? Status { get; set; }           // Pending | Processing | Extracted | NeedsReview | Failed | Indexed
         public int? TzOffsetMinutes { get; set; }     // لحساب "اليوم" بتوقيت المستخدم (الافتراضي 180)
+
+        /// <summary>
+        /// الملفات القديمة (Indexed) بتظهر تلقائي مع البحث بالاسم. true = تظهر كمان من غير بحث.
+        /// </summary>
+        public bool? IncludeHistorical { get; set; }
     }
 
     public record CertificateListItemDto(
@@ -30,7 +35,8 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         bool NeedsReview,
         int BatchNo,
         DateTime AddedAt,
-        DateTime DriveCreatedAt);
+        DateTime DriveCreatedAt,
+        bool IsRemovedFromDrive = false);   // الملف اتمسح/اتنقل من Drive (البيانات المستخرجة لسه موجودة)
 
     public record CertificateDetailDto(
         Guid Id,
@@ -50,7 +56,13 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         bool HasLocalCopy,
         int BatchNo,
         DateTime AddedAt,
-        DateTime DriveCreatedAt);
+        DateTime DriveCreatedAt,
+        bool IsRemovedFromDrive = false,
+        string? ParentFolderId = null,
+        DateTime? DriveModifiedAt = null,
+        long? FileSize = null,
+        int ExtractionAttempts = 0,
+        DateTime? ExtractedAt = null);
 
     // ============================ الدفعات ============================
 
@@ -109,5 +121,55 @@ namespace Bank.Shared.DTOs.CertificateDTOs
         int Processing,
         int Extracted,
         int NeedsReview,
-        int Failed);
+        int Failed,
+        int Indexed = 0,                       // ملفات قديمة متفهرسة (من غير استخراج)
+        int RemovedFromDrive = 0,
+        string BaselinePhase = "NotStarted",   // NotStarted | Nodes | Files | Completed
+        DateTime? BaselineCompletedAt = null);
+
+    // ============================ متابعة المزامنة ============================
+
+    public record CertificateDriveApiStatsDto(
+        long Requests, long Retries, long Throttled, long Failures, DateTime? LastThrottledAt, string? LastFailure);
+
+    public record CertificateSyncStatusDto(
+        string BaselinePhase,
+        DateTime? BaselineStartedAt,
+        DateTime? BaselineCompletedAt,
+        DateTime? ExtractCutoff,                // قبله = قديم (Indexed)، بعده = جديد (استخراج)
+        long BaselineNodesListed,
+        long BaselineFilesListed,
+        long BaselineFilesInScope,
+        bool ChangesTokenSaved,
+        DateTime? LastChangesSyncAt,
+        DateTime? ReconcileWatermark,
+        DateTime? LastRunStartedAt,
+        DateTime? LastRunFinishedAt,
+        bool RunInProgress,
+        System.Text.Json.JsonElement? LastRunStats,   // عدّادات آخر تشغيل (بتتحدث بعد كل صفحة)
+        string? LastError,
+        DateTime? LastErrorAt,
+        int ConsecutiveFailures,
+        int DriveNodes,
+        int DriveNodesInScope,
+        int SharedRoots,
+        int FoldersAwaitingScan,
+        Dictionary<string, int> CertificatesByStatus,
+        int PendingWaitingRetry,
+        DateTime? OldestPendingDiscoveredAt,
+        int ActiveExtractionWorkers,
+        int ExtractionWorkerLimit,
+        CertificateDriveApiStatsDto DriveApi);
+
+    public record CertificateDriveCheckFileDto(
+        string DriveFileId, string Name, DateTime? CreatedAt, string? ParentId, string? IndexedStatus);
+
+    public record CertificateDriveCheckDto(
+        string? AccountEmail,
+        bool ChangesApiAvailable,
+        int SharedFolderRoots,
+        bool MoreSharedFolderRoots,
+        List<CertificateDriveCheckFileDto> LatestPdfs,
+        int? PendingPdfChangesPeek,             // PDFs في الـ Changes feed من الـ token المحفوظ (من غير ما يتحرك)
+        List<string> Errors);
 }

@@ -36,6 +36,33 @@ public class CertificateAdminController : ControllerBase
         return StatusCode(result.StatusCode, result);
     }
 
+    /// <summary>تفاصيل المزامنة: مرحلة الفهرسة الأولى، آخر تشغيل (صفحات/طلبات Drive/ملفات جديدة)، الطابور، والـ workers.</summary>
+    [HttpGet("sync-status")]
+    [ProducesResponseType(typeof(ApiResponse<CertificateSyncStatusDto>), 200)]
+    public async Task<IActionResult> GetSyncStatus(CancellationToken cancellationToken)
+    {
+        var result = await _certificateService.GetSyncStatusAsync(cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>فحص حي لـ Drive (قراءة بس): Changes API، المجلدات المشتركة، آخر PDFs، وتغييرات مستنية في الـ feed.</summary>
+    [HttpPost("drive-check")]
+    [ProducesResponseType(typeof(ApiResponse<CertificateDriveCheckDto>), 200)]
+    public async Task<IActionResult> DriveCheck(CancellationToken cancellationToken)
+    {
+        var result = await _certificateService.CheckDriveAsync(cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
+    /// <summary>إعادة الفهرسة المسطّحة (بعد الفهرسة الأولى). مابتعملش تكرار ولا استخراج للملفات القديمة.</summary>
+    [HttpPost("index/rebuild")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    public async Task<IActionResult> RebuildIndex(CancellationToken cancellationToken)
+    {
+        var result = await _certificateService.RebuildIndexAsync(cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
+
     [HttpPost("{id:guid}/retry")]
     [ProducesResponseType(typeof(ApiResponse<RetryResultDto>), 200)]
     public async Task<IActionResult> Retry(Guid id, CancellationToken cancellationToken)
@@ -44,7 +71,7 @@ public class CertificateAdminController : ControllerBase
         return StatusCode(result.StatusCode, result);
     }
 
-    /// <summary>إعادة معالجة كل الشهادات الفاشلة (includeStuck=true يضيف العالقين من أكتر من ساعتين).</summary>
+    /// <summary>إعادة معالجة كل الشهادات الفاشلة (includeStuck=true يضيف العالقين أكتر من الـ lease والمتأجلة).</summary>
     [HttpPost("retry-failed")]
     [ProducesResponseType(typeof(ApiResponse<RetryResultDto>), 200)]
     public async Task<IActionResult> RetryFailed([FromQuery] bool includeStuck, CancellationToken cancellationToken)
