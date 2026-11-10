@@ -521,7 +521,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             reasons.Add($"اتفاق ضعيف على حروف اللوحة ({plate.Votes}/{plate.Total})");
         // لو الحروف اتاخدت من اللوحة الإنجليزية (mapped) فهي المصدر الأدق،
         // ومش منطقي نرفضها بسبب عدد glyphs اللوحة العربية (ممكن تشمل فاصل/ligature).
-        else if (mapped == null && lay.PlateGlyphs > 0 && finalLetters.Length != lay.PlateGlyphs)
+        else if (mapped == null && lay.PlateGlyphs > 0 && finalLetters.Length != lay.PlateGlyphs &&
+                 !plate.FromSpaced)
             reasons.Add("عدد حروف اللوحة لا يطابق عدد الـ glyphs في الشهادة");
 
         // اللوحة المتفرقة بتتقرأ بتقسيم الحروف، ولو الثقة مش عالية بتحتاج مراجعة.
@@ -898,7 +899,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (isPlate && mustLen.HasValue &&
             (voted.Text.Length != mustLen || voted.Votes < 2 || voted.Conf < 0.65))
         {
-            var spaced = TryReadSpacedPlate(engine, bmp, sx, sy, lay, c, mustLen.Value, ct);
+            var spaced = TryReadSpacedPlate(engine, bmp, sx, sy, lay, c, ct);
             if (spaced != null) return spaced;
         }
 
@@ -965,7 +966,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
     /// </summary>
     private static Decision? TryReadSpacedPlate(
         TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
-        CertCell c, int expected, CancellationToken ct)
+        CertCell c, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -1013,7 +1014,11 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         // تجاهل أي أثر رفيع في حافة الاقتصاص.
         runs = runs.Where(run => run.B - run.A >= 4 && run.B > 30).ToList();
-        if (runs.Count != expected) return null;
+
+        // عدد glyphs في الـ text layer مش موثوق في اللوحات المضغوطة (ممكن
+        // حرفين glyph يمثلوا 3 حروف)، فبنعتمد على عدد المقاطع الفعلية.
+        int expected = runs.Count;
+        if (expected < 2 || expected > 5) return null;
 
         var sb = new StringBuilder();
         double confSum = 0;
@@ -1042,8 +1047,11 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
             // بنجمع الحرف الناتج من كل PSM ونصوّت عليه. ده أدق من الاعتماد
             // على confidence الخام، لأن Tesseract بيدي 0.00 لحروف سليمة كتير.
-            var letterVotes = new Dictionary<char, (int Count, double ConfSum, int Repeated)>();
+            // SingleWord/RawLine أقوى في الحروف العربية المنفصلة من SingleChar
+            // (اللي بتسقّط النقط وتحوّل ي→ب و ح→و)، فبنحسب لهم دعم قوي.
+            var letterVotes = new Dictionary<char, (int Count, int StrongCount, int Repeated, double ConfSum)>();
             int candidateCount = 0;
+            int strongCandidateCount = 0;
             foreach (var psm in new[] { PageSegMode.SingleChar, PageSegMode.SingleWord, PageSegMode.SingleLine, PageSegMode.SparseText, PageSegMode.RawLine })
             {
                 using var tp = engine.Process(pix, psm);
@@ -1051,29 +1059,71 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                 double candidateConf = tp.GetMeanConfidence();
                 if (candidate.Length == 0) continue;
 
+                bool strong = psm is PageSegMode.SingleWord or PageSegMode.RawLine;
                 char letter = PickSpacedLetter(candidate);
                 letterVotes.TryGetValue(letter, out var vote);
                 bool repeated = candidate.Length >= 2 && candidate.All(ch => ch == candidate[0]);
-                letterVotes[letter] = (vote.Count + 1, vote.ConfSum + candidateConf,
-                                       vote.Repeated + (repeated ? 1 : 0));
+                letterVotes[letter] = (vote.Count + 1,
+                                       vote.StrongCount + (strong ? 1 : 0),
+                                       vote.Repeated + (repeated ? 1 : 0),
+                                       vote.ConfSum + candidateConf);
                 candidateCount++;
+                if (strong) strongCandidateCount++;
+            }
+            if (candidateCount == 0)
+            {
+                // الحرف المقفول زي "ه" أحياناً Tesseract بيقراه 0/O، والـ
+                // whitelist بيمنعه فيرجّع فاضي. بنعيد القراءة بدون whitelist
+                // ونحوّل القراءة المقفولة لهاء.
+                engine.SetVariable("tessedit_char_whitelist", "");
+                string raw = "";
+                double fallbackConf = 0;
+                bool fallbackStrong = false;
+                foreach (var psm in new[] { PageSegMode.SingleWord, PageSegMode.RawLine, PageSegMode.SingleChar, PageSegMode.SingleLine })
+                {
+                    using var tp = engine.Process(pix, psm);
+                    var candidate = tp.GetText().Trim();
+                    if (candidate.Length == 0) continue;
+                    raw = candidate;
+                    fallbackConf = tp.GetMeanConfidence();
+                    fallbackStrong = psm is PageSegMode.SingleWord or PageSegMode.RawLine;
+                    break;
+                }
+                engine.SetVariable("tessedit_char_whitelist", PlateAlphabet);
+
+                char? fallbackLetter = null;
+                var cleaned = Clean(raw, true, false).Replace('ة', 'ه');
+                if (cleaned.Length > 0)
+                    fallbackLetter = PickSpacedLetter(cleaned);
+                else if (raw is "0" or "O" or "o")
+                    fallbackLetter = 'ه';
+
+                if (fallbackLetter.HasValue)
+                {
+                    letterVotes[fallbackLetter.Value] = (1, fallbackStrong ? 1 : 0, 0, fallbackConf);
+                    candidateCount = 1;
+                    strongCandidateCount = fallbackStrong ? 1 : 0;
+                }
             }
             if (candidateCount == 0) return null;
 
-            // عند التعادل، الحرف اللي جه على شكل مكرر (مثلاً "يي") بيكون
-            // أوضح من قراءة SingleChar اللي بتسقط النقط (بتقرا ي كأنها ب).
+            // الدعم القوي (SingleWord/RawLine) بيقدّم على الأصوات الضعيفة،
+            // وبعدها الأصوات الأكتر، وبعدها الشكل المكرر.
             var best = letterVotes
-                .OrderByDescending(kv => kv.Value.Count)
+                .OrderByDescending(kv => kv.Value.StrongCount)
+                .ThenByDescending(kv => kv.Value.Count)
                 .ThenByDescending(kv => kv.Value.Repeated)
                 .ThenByDescending(kv => kv.Value.ConfSum / Math.Max(1, kv.Value.Count))
                 .First();
             sb.Append(best.Key);
             confSum += best.Value.ConfSum / Math.Max(1, best.Value.Count);
 
-            // اتفاق الـ PSM على نفس الحرف = ثقة. لو حرف واحد بس رجع نتيجة
-            // (من غير تصويت) بنعتبره دعم جزئي مش تأكيد كامل.
-            double agreement = (double)best.Value.Count / candidateCount;
-            certaintySum += candidateCount == 1 ? 0.6 : agreement;
+            // الثقة = اتفاق قراءات SingleWord/RawLine. لو مفيش دعم قوي،
+            // بنرجع لاتفاق كل الـ PSMs ونعتبره أقل تأكيداً.
+            double agreement = strongCandidateCount > 0
+                ? (double)best.Value.StrongCount / strongCandidateCount
+                : candidateCount == 1 ? 0.6 : (double)best.Value.Count / candidateCount;
+            certaintySum += agreement;
         }
 
         var result = sb.ToString();
@@ -1083,7 +1133,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         // الحقيقي هو اختلاف PSMs على حروف مختلفة، مش انخفاض confidence الخام.
         double avgConf = confSum / Math.Max(1, expected);
         double certainty = certaintySum / Math.Max(1, expected);
-        return new Decision(result, 2, 2, avgConf, certainty < 0.75);
+        return new Decision(result, 2, 2, avgConf, certainty < 0.75, true);
     }
 
     private static string Clean(string s, bool plate, bool keepModelChars = false)
@@ -1256,7 +1306,9 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         Dictionary<string, CertCell> Cells, string? EnglishPlateLetters = null,
         string? ModelFromText = null);
 
-    private sealed record Decision(string Text, int Votes, int Total, double Conf, bool Uncertain = false)
+    private sealed record Decision(
+        string Text, int Votes, int Total, double Conf,
+        bool Uncertain = false, bool FromSpaced = false)
     {
         public static Decision Empty => new("", 0, 8, 0);
     }
