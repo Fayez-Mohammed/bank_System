@@ -27,6 +27,7 @@ public class DataFileService : IDataFileService
     private readonly IFileStorageService _fileStorageService;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IPermissionService _permissions;
+    private readonly IDataRowQuotaService _quota;
 
     private const string NoDataFilePermissionMessage = "ليس لديك صلاحية على ملف الداتا ده.";
 
@@ -36,7 +37,8 @@ public class DataFileService : IDataFileService
         AppDbContext context,
         IFileStorageService fileStorageService,
         IBackgroundJobClient backgroundJobClient,
-        IPermissionService permissions)
+        IPermissionService permissions,
+        IDataRowQuotaService quota)
     {
         _logger = logger;
         _unit = unit;
@@ -44,6 +46,7 @@ public class DataFileService : IDataFileService
         _fileStorageService = fileStorageService;
         _backgroundJobClient = backgroundJobClient;
         _permissions = permissions;
+        _quota = quota;
     }
     public async Task<ApiResponse<DataFileImportStatusDto>> GetImportStatusAsync(
     Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
@@ -92,7 +95,11 @@ public class DataFileService : IDataFileService
         var totalRows = files.Sum(f => (long)f.RowCount);
         var currentUserRows = files.Where(f => f.OwnerId == currentUserId).Sum(f => (long)f.RowCount);
 
-        var header = new DataFilesHeaderDto(items.Count, totalRows, currentUserRows, userScope.DisplayName);
+        var maxRows = await _quota.GetLimitAsync(userScope.GroupId, currentUserId, cancellationToken);
+        var remainingRows = maxRows.HasValue ? Math.Max(0, maxRows.Value - totalRows) : (long?)null;
+
+        var header = new DataFilesHeaderDto(
+            items.Count, totalRows, currentUserRows, userScope.DisplayName, maxRows, remainingRows);
         return ApiResponse<DataFilesListResponseDto>.SuccessResponse(new DataFilesListResponseDto(header, items));
     }
 
@@ -113,6 +120,30 @@ public class DataFileService : IDataFileService
         {
             return ApiResponse<Guid>.Fail("ليس لديك صلاحية رفع ملفات الداتا.", null, StatusCodes.Status403Forbidden);
         }
+
+        // منع تكرار اسم الملف في نفس النطاق (الجروب، أو ملفات اليوزر الشخصية)
+        var fileName = request.File.FileName.Trim();
+        var fileNameLower = fileName.ToLower();
+
+        var duplicateExists = await _dbContext.DataFiles.AsNoTracking()
+            .Where(f => userScope.GroupId.HasValue
+                ? f.GroupId == userScope.GroupId.Value
+                : f.GroupId == null && f.OwnerId == uploaderId)
+            .Where(f => f.ImportStatus != DataFileImportStatus.Failed)   // الملف الفاشل ما يمنعش إعادة الرفع
+            .AnyAsync(f => f.FileName.ToLower() == fileNameLower, cancellationToken);
+
+        if (duplicateExists)
+        {
+            _logger.LogWarning(
+                "Rejected data file upload: duplicate name '{FileName}' (groupId={GroupId}, user={UserId})",
+                fileName, userScope.GroupId, uploaderId);
+            return ApiResponse<Guid>.Fail("الملف ده موجود بالفعل.", null, StatusCodes.Status409Conflict);
+        }
+
+        // رفض سريع لو الحد خلص (الفحص الدقيق بيحصل في الـ import job)
+        var quota = await _quota.GetForScopeAsync(userScope.GroupId, uploaderId, null, cancellationToken);
+        if (quota.Remaining == 0)
+            return ApiResponse<Guid>.Fail(DataRowQuotaMessages.Full(quota), null, 400);
 
         var subFolder = userScope.GroupId.HasValue
             ? $"groups/{userScope.GroupId.Value}"
@@ -174,6 +205,10 @@ public class DataFileService : IDataFileService
             _logger.LogWarning("Append denied on DataFile {DataFileId} for user {UserId}", dataFileId, currentUserId);
             return ApiResponse<bool>.Fail(NoDataFilePermissionMessage, null, StatusCodes.Status403Forbidden);
         }
+
+        var quota = await _quota.GetForScopeAsync(dataFile.GroupId, dataFile.OwnerId, null, cancellationToken);
+        if (quota.Remaining == 0)
+            return ApiResponse<bool>.Fail(DataRowQuotaMessages.Full(quota), null, 400);
 
         var appendFolder = dataFile.GroupId.HasValue
             ? $"groups/{dataFile.GroupId.Value}/appends/{dataFileId}"
@@ -334,10 +369,29 @@ public class DataFileService : IDataFileService
             throw new UnauthorizedAccessException(NoDataFilePermissionMessage);
         }
 
-        var stream = await _fileStorageService.OpenReadAsync(dataFile.StoragePath, cancellationToken);
-        _logger.LogInformation("DataFile {DataFileId} downloaded", dataFileId);
+        // الاستيراد لسه شغال أو فشل: الـ DB ناقصة. مفيش رجوع للملف الأصلي، المستخدم بياخد رسالة واضحة.
+        if (dataFile.ImportStatus != DataFileImportStatus.Completed)
+        {
+            _logger.LogWarning("Download rejected for DataFile {DataFileId}: import status {Status}",
+                dataFileId, dataFile.ImportStatus);
+            throw new DataFileExportException(dataFile.ImportStatus == DataFileImportStatus.Failed
+                ? "استيراد الملف فشل، فمينفعش يتحمّل."
+                : "الملف لسه بيتم استيراده. جرّب تاني بعد ما يخلص.");
+        }
 
-        return (stream, "application/octet-stream", dataFile.FileName);
+        var rows = _dbContext.HistoricalPlates
+            .AsNoTracking()
+            .Where(p => p.DataFileId == dataFileId)
+            .OrderBy(p => p.Id)
+            .Select(p => new DataFilePlateRow(
+                p.RawPlate, p.Notes, p.VehicleType, p.Street, p.District, p.Location, p.RecordedAt, p.RecorderName))
+            .AsAsyncEnumerable();
+
+        var stream = await DataFileExcelExporter.WriteAsync(rows, cancellationToken);
+        _logger.LogInformation("DataFile {DataFileId} exported from database (stored RowCount {RowCount})",
+            dataFileId, dataFile.RowCount);
+
+        return (stream, DataFileExcelExporter.ContentType, DataFileExcelExporter.ToExportFileName(dataFile.FileName));
     }
 
     public async Task<ApiResponse<UpdateHistoricalPlateResponseDto>> UpdateHistoricalPlateAsync(

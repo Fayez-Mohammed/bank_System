@@ -121,4 +121,17 @@ public class CheckFilesController : ControllerBase
         var result = await _checkFileService.DeleteAsync(checkFileId, CurrentUserId, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+
+    /// <summary>
+    /// Distinct bank names (with plate counts) in the user's active check file
+    /// (the group's active file if the user is in a group, otherwise their own) — for the bank picker.
+    /// </summary>
+    [HttpGet("banks")]
+    [Authorize(Policy = PermissionPolicies.ManageCheckFiles)]
+    [ProducesResponseType(typeof(ApiResponse<List<BankNameDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetBanks(CancellationToken cancellationToken)
+    {
+        var result = await _checkFileService.GetBanksAsync(CurrentUserId, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 }

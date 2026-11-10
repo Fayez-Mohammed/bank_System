@@ -10,6 +10,8 @@ public record CheckFileSummaryDto(
     string UploaderName,
     DateTime CreatedAt);
 
+public record BankNameDto(string Name, int PlateCount);
+
 public class CreateCheckFileRequestDto
 {
     public IFormFile File { get; set; } = null!;

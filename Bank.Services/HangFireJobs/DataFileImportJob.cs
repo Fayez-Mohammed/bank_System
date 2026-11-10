@@ -28,18 +28,22 @@ public class DataFileImportJob
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
     private readonly ILogger<DataFileImportJob> _logger;
+    private readonly IDataRowQuotaService _quota;
 
     static DataFileImportJob()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
-    public DataFileImportJob(AppDbContext dbContext, IFileStorageService fileStorage, ILogger<DataFileImportJob> logger, IConfiguration configuration)
+    public DataFileImportJob(
+        AppDbContext dbContext, IFileStorageService fileStorage, ILogger<DataFileImportJob> logger,
+        IConfiguration configuration, IDataRowQuotaService quota)
     {
         _dbContext = dbContext;
         _fileStorage = fileStorage;
         _logger = logger;
         _configuration = configuration;
+        _quota = quota;
     }
 
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
@@ -62,6 +66,25 @@ public class DataFileImportJob
 
         try
         {
+            // قفل لكل نطاق (جروب أو يوزر): الاستيرادات بتتنفذ واحد ورا التاني، فالحد مايتخطاش بالتوازي
+            var file = await _dbContext.DataFiles.AsNoTracking()
+                .Where(f => f.Id == dataFileId)
+                .Select(f => new { f.GroupId, f.OwnerId })
+                .FirstAsync(cancellationToken);
+
+            var scopeKey = file.GroupId.HasValue ? $"data-rows:group:{file.GroupId}" : $"data-rows:user:{file.OwnerId}";
+            await using (var lockCommand = connection.CreateCommand())
+            {
+                lockCommand.Transaction = transaction;
+                lockCommand.CommandText = "SELECT pg_advisory_xact_lock(hashtextextended(@key, 0))";
+                lockCommand.Parameters.AddWithValue("@key", scopeKey);
+                await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // الملف نفسه مستثنى لو هيتستبدل (مش append) لأن صفوفه القديمة هتتمسح
+            var quota = await _quota.GetForScopeAsync(
+                file.GroupId, file.OwnerId, isAppend ? null : dataFileId, cancellationToken);
+
             // الحذف جوه نفس الـ transaction بتاعة الـ import: لو الاستيراد فشل، الـ rollback
             // بيرجّع الصفوف القديمة بدل ما الملف يفضل فاضي.
             if (!isAppend)
@@ -95,7 +118,7 @@ public class DataFileImportJob
                 var map = DetectColumnsFromHeaders(csv.HeaderRecord ?? Array.Empty<string>());
 
                 using var readerWrapper = new CsvDataReaderWrapper(csv, map, dataFileId, userId);
-                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, cancellationToken);
+                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, quota, cancellationToken);
             }
             else
             {
@@ -107,7 +130,7 @@ public class DataFileImportJob
                 using var excelReader = ExcelReaderFactory.CreateReader(stream, readerConfig);
                 var map = DetectColumnsFromExcel(excelReader);
                 using var readerWrapper = new ExcelDataReaderWrapper(excelReader, map, dataFileId, userId);
-                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, cancellationToken);
+                totalInserted = await ExecuteBulkCopyAsync(connection, readerWrapper, quota, cancellationToken);
             }
 
             parseAndInsertStopwatch.Stop();
@@ -167,6 +190,26 @@ public class DataFileImportJob
                     cancellationToken);
 
             throw;
+        }
+        catch (DataRowLimitExceededException ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning("Import rejected for DataFile {DataFileId}: {Reason}", dataFileId, ex.Message);
+
+            // رفض بسبب الحد مش عطل: مانرميش exception عشان الـ job ما يظهرش Failed في Hangfire
+            if (isAppend)
+            {
+                // الملف الأصلي سليم ومكتمل، بنسجل السبب بس
+                await _dbContext.DataFiles.Where(f => f.Id == dataFileId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(f => f.ImportError, ex.Message), cancellationToken);
+            }
+            else
+            {
+                await _dbContext.DataFiles.Where(f => f.Id == dataFileId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(f => f.ImportStatus, DataFileImportStatus.Failed)
+                        .SetProperty(f => f.ImportError, ex.Message), cancellationToken);
+            }
         }
         catch (Exception ex)
         {
@@ -239,7 +282,7 @@ public class DataFileImportJob
     }
 
     private static async Task<int> ExecuteBulkCopyAsync(
-        NpgsqlConnection connection, IDataReader reader, CancellationToken cancellationToken)
+        NpgsqlConnection connection, IDataReader reader, DataRowQuota quota, CancellationToken cancellationToken)
     {
         // COPY بالـ binary format هو المقابل لـ SqlBulkCopy في PostgreSQL، وبيشتغل
         // جوه الـ transaction المفتوحة على الـ connection تلقائياً.
@@ -249,8 +292,16 @@ public class DataFileImportJob
             cancellationToken);
         importer.Timeout = TimeSpan.FromSeconds(BulkCopyTimeoutSeconds);
 
+        var remaining = quota.Remaining;
+        var written = 0L;
+
         while (reader.Read())
         {
+            // أول ما الصفوف تعدّي المتبقي نوقف فورًا (من غير ما نقرا الملف كله)
+            if (remaining.HasValue && written >= remaining.Value)
+                throw new DataRowLimitExceededException(DataRowQuotaMessages.ImportExceeded(quota));
+            written++;
+
             await importer.StartRowAsync(cancellationToken);
             await importer.WriteAsync(reader.GetGuid(0), NpgsqlDbType.Uuid, cancellationToken);
             await importer.WriteAsync(reader.GetGuid(1), NpgsqlDbType.Uuid, cancellationToken);

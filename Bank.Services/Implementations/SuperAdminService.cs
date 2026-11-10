@@ -82,6 +82,47 @@ namespace Bank.Services.Implementations
             _logger.LogInformation("Subscription for user {UserId} set to {ExpiresAt}", userId, newExpiry);
             return ApiResponse<DateTime?>.SuccessResponse(newExpiry, "تم تحديث الاشتراك.");
         }
+
+        public async Task<ApiResponse<long?>> SetGroupDataRowLimitAsync(
+            Guid groupId, SetDataRowLimitDto dto, CancellationToken ct = default)
+        {
+            if (dto.MaxRows is < 0) return ApiResponse<long?>.Fail("الحد لازم يكون صفر أو أكتر.");
+
+            var updated = await _context.Groups
+                .Where(g => g.Id == groupId)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.MaxDataFileRows, dto.MaxRows), ct);
+
+            return updated == 0
+                ? ApiResponse<long?>.Fail("الجروب غير موجود.", null, 404)
+                : ApiResponse<long?>.SuccessResponse(dto.MaxRows, "تم تحديث الحد.");
+        }
+
+        public async Task<ApiResponse<long?>> SetUserDataRowLimitAsync(
+            Guid userId, SetDataRowLimitDto dto, CancellationToken ct = default)
+        {
+            if (dto.MaxRows is < 0) return ApiResponse<long?>.Fail("الحد لازم يكون صفر أو أكتر.");
+
+            var user = await _context.Users.AsNoTracking()
+                .Where(u => u.Id == userId && u.Role != UserRole.SuperAdmin)
+                .Select(u => new
+                {
+                    u.GroupId,
+                    AdminsGroup = _context.Groups.Any(g => g.AdminId == u.Id && g.IsActive)
+                })
+                .FirstOrDefaultAsync(ct);
+
+            if (user is null) return ApiResponse<long?>.Fail("المستخدم غير موجود.", null, 404);
+
+            // اللي في جروب بيتحسب على الجروب
+            if (user.GroupId.HasValue || user.AdminsGroup)
+                return ApiResponse<long?>.Fail("اليوزر ده تابع لجروب، الحد بيتحدد على الجروب نفسه.", null, 400);
+
+            await _context.Users
+                .Where(u => u.Id == userId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.MaxDataFileRows, dto.MaxRows), ct);
+
+            return ApiResponse<long?>.SuccessResponse(dto.MaxRows, "تم تحديث الحد.");
+        }
         //Admins
         public async Task<ApiResponse<AdminResponseDto>> CreateAdminAsync(CreateAdminDto dto, CancellationToken ct = default)
         {
@@ -299,7 +340,8 @@ namespace Bank.Services.Implementations
                 AdminId = group.AdminId,
                 AdminName = admin.FullName,
                 MembersCount = 0,
-                CreatedAt = group.CreatedAt
+                CreatedAt = group.CreatedAt,
+                MaxDataFileRows = group.MaxDataFileRows
             });
         }
 
@@ -327,7 +369,8 @@ namespace Bank.Services.Implementations
                     AdminId = g.AdminId,
                     AdminName = g.Admin.FullName,
                     MembersCount =g.Members.Count(), //_context.Users.Count(u => u.GroupId == g.Id),
-                    CreatedAt = g.CreatedAt
+                    CreatedAt = g.CreatedAt,
+                    MaxDataFileRows = g.MaxDataFileRows
                 })
                 .ToListAsync(ct);
 
@@ -352,7 +395,8 @@ namespace Bank.Services.Implementations
                     AdminId = g.AdminId,
                     AdminName = g.Admin != null ? g.Admin.FullName : null,
                     MembersCount =g.Members.Count(), //_context.Users.Count(u => u.GroupId == g.Id),
-                    CreatedAt = g.CreatedAt
+                    CreatedAt = g.CreatedAt,
+                    MaxDataFileRows = g.MaxDataFileRows
                 })
                 .FirstOrDefaultAsync(ct);
 
@@ -492,7 +536,8 @@ namespace Bank.Services.Implementations
                 IsActive = user.IsActive,
                 CreatedAt = user.CreatedAt,
                 GroupId = user.GroupId,
-                GroupName = groupName
+                GroupName = groupName,
+                MaxDataFileRows = user.MaxDataFileRows
             });
         }
 
@@ -532,6 +577,7 @@ namespace Bank.Services.Implementations
                     GroupId = u.GroupId,
                     GroupName = u.Group != null ? u.Group.Name : null,
                     SubscriptionExpiresAt = u.SubscriptionExpiresAt,
+                    MaxDataFileRows = u.MaxDataFileRows,
 
                     Permissions = _context.UserPermissions
                     .Where(p => p.UserId == u.Id)
@@ -566,7 +612,8 @@ namespace Bank.Services.Implementations
                     IsActive = u.IsActive,
                     CreatedAt = u.CreatedAt,
                     GroupId = u.GroupId,
-                    GroupName = u.Group != null ? u.Group.Name : null
+                    GroupName = u.Group != null ? u.Group.Name : null,
+                    MaxDataFileRows = u.MaxDataFileRows
                 })
                 .FirstOrDefaultAsync(ct);
 

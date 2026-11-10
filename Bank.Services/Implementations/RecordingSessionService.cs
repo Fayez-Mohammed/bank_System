@@ -36,13 +36,15 @@ public class RecordingSessionService : IRecordingSessionService
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IRecordingArchiveService _archiveService;
     private readonly IPermissionService _permissions;
+    private readonly IDataRowQuotaService _quota;
 
     public RecordingSessionService(
         ILogger<RecordingSessionService> logger, IUnitOfWork unit, AppDbContext dbContext,
         IFileStorageService fileStorage, IBackgroundJobClient backgroundJobClient,
-        IRecordingArchiveService archiveService, IPermissionService permissions)
+        IRecordingArchiveService archiveService, IPermissionService permissions, IDataRowQuotaService quota)
     {
         _permissions = permissions;
+        _quota = quota;
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
@@ -454,6 +456,11 @@ public class RecordingSessionService : IRecordingSessionService
         {
             return ApiResponse<AppendToDataFileResultDto>.SuccessResponse(new AppendToDataFileResultDto(0), "مفيش لوحات مطابقة للشرط ده.");
         }
+
+        var quota = await _quota.GetForScopeAsync(dataFile.GroupId, dataFile.OwnerId, null, cancellationToken);
+        if (quota.Remaining is { } left && plates.Count > left)
+            return ApiResponse<AppendToDataFileResultDto>.Fail(
+                DataRowQuotaMessages.Exceeded(quota, plates.Count), null, 400);
 
         var historicalPlates = plates.Select(p => new HistoricalPlate
         {

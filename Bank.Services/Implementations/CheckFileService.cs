@@ -211,6 +211,50 @@ public class CheckFileService : ICheckFileService
         return ApiResponse<List<CheckFileSummaryDto>>.SuccessResponse(files);
     }
 
+    public async Task<ApiResponse<List<BankNameDto>>> GetBanksAsync(
+        Guid currentUserId, CancellationToken cancellationToken = default)
+    {
+        var userScope = await ResolveUserScopeAsync(currentUserId, cancellationToken);
+        if (userScope == null) return ApiResponse<List<BankNameDto>>.Fail("المستخدم غير موجود.");
+
+        // الملف النشط: بتاع الجروب لو المستخدم في جروب، وإلا بتاعه هو
+        var activeFileId = await _dbContext.CheckFiles
+            .AsNoTracking()
+            .Where(f => f.IsActive)
+            .Where(f => userScope.GroupId.HasValue
+                ? f.GroupId == userScope.GroupId.Value
+                : f.GroupId == null && f.UploadedBy == currentUserId)
+            .Select(f => (Guid?)f.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // مفيش ملف نشط: قايمة فاضية (مش خطأ)
+        if (activeFileId is null)
+            return ApiResponse<List<BankNameDto>>.SuccessResponse(new List<BankNameDto>());
+
+        // الـ GROUP BY بيتنفّذ في الداتابيز، والنتيجة عدد قليل من الصفوف
+        var raw = await _dbContext.CheckPlates
+            .AsNoTracking()
+            .Where(p => p.CheckFileId == activeFileId.Value)
+            .GroupBy(p => p.BankName)
+            .Select(g => new { Name = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        return ApiResponse<List<BankNameDto>>.SuccessResponse(
+            MergeBankNames(raw.Select(x => ((string?)x.Name, x.Count))));
+    }
+
+    /// <summary>
+    /// replace-bank-plates بيقارن اسم البنك case-insensitive، فبنوحّد الأسماء اللي بتختلف في الحالة بس
+    /// (بنعرض الكتابة الأكتر استخدامًا)، وبنشيل الفاضي. الترتيب: الأكتر لوحات الأول.
+    /// </summary>
+    internal static List<BankNameDto> MergeBankNames(IEnumerable<(string? Name, int Count)> raw) =>
+        raw.Where(x => !string.IsNullOrWhiteSpace(x.Name))
+           .GroupBy(x => x.Name!.Trim(), StringComparer.OrdinalIgnoreCase)
+           .Select(g => new BankNameDto(g.OrderByDescending(x => x.Count).First().Name!.Trim(), g.Sum(x => x.Count)))
+           .OrderByDescending(b => b.PlateCount)
+           .ThenBy(b => b.Name, StringComparer.CurrentCulture)
+           .ToList();
+
     public async Task<ApiResponse<CheckFileSummaryDto>> UploadAsync(
         Guid uploaderId, CreateCheckFileRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -234,7 +278,16 @@ public class CheckFileService : ICheckFileService
         List<List<string?>> allRows;
         await using (var stream = request.File.OpenReadStream())
         {
-            allRows = ReadAllRowsAsStrings(stream, extension).ToList();
+            var read = ReadCheckFileRows(stream, extension);
+            allRows = read.Rows;
+
+            if (extension != ".csv")
+            {
+                if (read.Match == CheckSheetMatch.FirstSheetFallback)
+                    _logger.LogWarning("CheckFile upload: no sheet with plate/type/bank/chassis headers, using the first sheet");
+                else
+                    _logger.LogInformation("CheckFile upload: using sheet '{Sheet}' ({Match} match)", read.SheetName, read.Match);
+            }
         }
 
         if (allRows.Count < 2)
@@ -361,7 +414,9 @@ public class CheckFileService : ICheckFileService
         List<List<string?>> allRows;
         await using (var stream = request.File.OpenReadStream())
         {
+            //  allRows = ReadCheckFileRows(stream, extension).Rows;
             allRows = ReadAllRowsAsStrings(stream, extension).ToList();   // الشيت الأول بس
+
         }
 
         if (allRows.Count < 2)
@@ -693,6 +748,166 @@ public class CheckFileService : ICheckFileService
         return null;
     }
 
+    // =====================================================================
+    //  اختيار شيت التشييك من ملف الإكسل
+    //
+    //  الملف ممكن يبقى فيه أكتر من شيت. بنختار الشيت اللي صف العناوين فيه فيه الأعمدة الأربعة
+    //  (اللوحه، النوع، البنك، الشاص) **بس** (4 خلايا عناوين مش فاضية بالظبط، من غير أي عمود زيادة)،
+    //  وبنرجّع بياناته بترتيب ثابت [لوحة، نوع، بنك، شاصي]، فباقي الكود
+    //  (PlateColumnIndex=0 ... ChassisNumberColumnIndex=3) يشتغل من غير أي تغيير.
+    //
+    //  ترتيب الأولوية:
+    //    1) Exact   : أول شيت صف العناوين فيه الأربع أعمدة بس (بندوّر في أول 30 صف).
+    //    2) Loose   : مفيش شيت زي كده ← أول شيت فيه الأربع أعمدة ومعاهم أعمدة زيادة.
+    //    3) FirstSheetFallback: مفيش ولا واحد ← السلوك القديم (أول شيت بأعمدة ثابتة).
+    //  - لو الشيت الـ Exact هو أول شيت: قراءة واحدة بس (من غير تكلفة زيادة).
+    //  - ملفات CSV: السلوك القديم.
+    // =====================================================================
+    private const int HeaderScanRows = 30;
+
+    // الترتيب في FindCheckColumns مهم: لوحة ← شاصي ← بنك ← نوع (النوع الأعم فبيتاخد آخر)
+    private static readonly string[] PlateHeaderKeywords = { "لوحه", "لوحة", "plate" };
+    private static readonly string[] ChassisHeaderKeywords = { "شاص", "شاسي", "هيكل", "chassis", "chasis", "vin" };
+    private static readonly string[] BankHeaderKeywords = { "بنك", "bank" };
+    private static readonly string[] TypeHeaderKeywords = { "نوع", "طراز", "تراز" };
+
+    private sealed record CheckColumns(int Plate, int Type, int Bank, int Chassis);
+
+    private sealed record HeaderHit(int RowIndex, CheckColumns Cols, bool Exact);
+
+    internal enum CheckSheetMatch { Exact, Loose, FirstSheetFallback }
+
+    /// <summary>Rows[0] = صف العناوين، وبعده الداتا. SheetName = null لو اتستخدم السلوك القديم.</summary>
+    internal sealed record CheckSheetResult(List<List<string?>> Rows, string? SheetName, CheckSheetMatch Match);
+
+    private static CheckColumns? FindCheckColumns(List<string?> header)
+    {
+        var used = new HashSet<int>();
+
+        var plate = FindHeaderColumn(header, PlateHeaderKeywords, used);
+        if (!plate.HasValue) return null;
+        used.Add(plate.Value);
+
+        var chassis = FindHeaderColumn(header, ChassisHeaderKeywords, used);
+        if (!chassis.HasValue) return null;
+        used.Add(chassis.Value);
+
+        var bank = FindHeaderColumn(header, BankHeaderKeywords, used);
+        if (!bank.HasValue) return null;
+        used.Add(bank.Value);
+
+        var type = FindHeaderColumn(header, TypeHeaderKeywords, used);
+        if (!type.HasValue) return null;
+
+        return new CheckColumns(plate.Value, type.Value, bank.Value, chassis.Value);
+    }
+
+    /// <summary>
+    /// أفضل صف عناوين في أول صفوف الشيت: الصف اللي فيه الأربع أعمدة بس (Exact) له الأولوية،
+    /// وإلا أول صف فيه الأربع أعمدة ومعاهم زيادة (Loose).
+    /// </summary>
+    private static HeaderHit? FindCheckHeader(List<List<string?>> head)
+    {
+        HeaderHit? loose = null;
+        for (var i = 0; i < head.Count; i++)
+        {
+            var cols = FindCheckColumns(head[i]);
+            if (cols is null) continue;
+
+            // الخلايا الفاضية أو اللي فيها مسافات بس ما بتتعدّش
+            if (head[i].Count(c => !string.IsNullOrWhiteSpace(c)) == 4)
+                return new HeaderHit(i, cols, Exact: true);
+
+            loose ??= new HeaderHit(i, cols, Exact: false);
+        }
+        return loose;
+    }
+
+    private static List<string?> ReadCurrentRow(IExcelDataReader reader)
+    {
+        var row = new List<string?>(reader.FieldCount);
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            row.Add(reader.GetValue(i)?.ToString()?.Trim());
+        }
+        return row;
+    }
+
+    private static List<List<string?>> ReadSheetHead(IExcelDataReader reader)
+    {
+        var head = new List<List<string?>>();
+        while (head.Count < HeaderScanRows && reader.Read())
+            head.Add(ReadCurrentRow(reader));
+        return head;
+    }
+
+    // من صف العناوين لآخر الشيت، بترتيب [لوحة، نوع، بنك، شاصي]
+    private static List<List<string?>> ReadRemappedRows(
+        IExcelDataReader reader, List<List<string?>> head, HeaderHit hit)
+    {
+        var rows = new List<List<string?>>();
+        void Add(List<string?> r) => rows.Add(new List<string?>
+        {
+            GetCell(r, hit.Cols.Plate), GetCell(r, hit.Cols.Type), GetCell(r, hit.Cols.Bank), GetCell(r, hit.Cols.Chassis)
+        });
+
+        for (var j = hit.RowIndex; j < head.Count; j++) Add(head[j]);   // من صف العناوين
+        while (reader.Read()) Add(ReadCurrentRow(reader));              // وباقي الشيت
+        return rows;
+    }
+
+    internal static CheckSheetResult ReadCheckFileRows(Stream stream, string extension)
+    {
+        if (extension == ".csv")
+            return new CheckSheetResult(ReadAllRowsAsStrings(stream, extension).ToList(), null, CheckSheetMatch.FirstSheetFallback);
+
+        // بنحط الملف في الذاكرة (الحد الأقصى 50MB) عشان نقدر نفتحه مرة تانية لو احتجنا،
+        // من غير الاعتماد على إن الـ stream الأصلي بيتعمله seek أو إن الـ reader مابيقفلوش.
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        var bytes = buffer.GetBuffer();
+        var length = (int)buffer.Length;
+        MemoryStream Open() => new(bytes, 0, length, writable: false);
+
+        // أول شيت Loose بنفتكره، ونكمل دوّر على شيت Exact
+        HeaderHit? looseHit = null;
+        var looseSheetIndex = -1;
+        string? looseSheetName = null;
+        var sheetIndex = 0;
+
+        using (var reader = ExcelReaderFactory.CreateReader(Open()))
+        {
+            do
+            {
+                var head = ReadSheetHead(reader);
+                var hit = FindCheckHeader(head);
+
+                if (hit is { Exact: true })
+                    return new CheckSheetResult(ReadRemappedRows(reader, head, hit), reader.Name, CheckSheetMatch.Exact);
+
+                if (hit is not null && looseHit is null)
+                {
+                    looseHit = hit;
+                    looseSheetIndex = sheetIndex;
+                    looseSheetName = reader.Name;
+                }
+                sheetIndex++;
+            } while (reader.NextResult());
+        }
+
+        // مفيش شيت فيه الأربع أعمدة بس: ناخد أول شيت فيه الأربع أعمدة ومعاهم زيادة
+        if (looseHit is not null)
+        {
+            using var reader = ExcelReaderFactory.CreateReader(Open());
+            for (var s = 0; s < looseSheetIndex; s++) reader.NextResult();
+            var head = ReadSheetHead(reader);
+            return new CheckSheetResult(ReadRemappedRows(reader, head, looseHit), looseSheetName, CheckSheetMatch.Loose);
+        }
+
+        // مفيش ولا شيت فيه الأربع أعمدة: السلوك القديم (أول شيت، أعمدة ثابتة)
+        return new CheckSheetResult(ReadAllRowsAsStrings(Open(), extension).ToList(), null, CheckSheetMatch.FirstSheetFallback);
+    }
+
     /// <summary>مستخدمة كمان من ReferralJobService (نفس منطق القراءة، أعمدة مختلفة).</summary>
     internal static IEnumerable<List<string?>> ReadAllRowsAsStrings(Stream stream, string extension)
     {
@@ -727,6 +942,6 @@ public class CheckFileService : ICheckFileService
             yield return row;
         }
     }
-
+   
     private record UserScopeInfo(Guid? GroupId, UserRole Role);
 }

@@ -104,6 +104,10 @@ namespace Bank.DAL.Migrations
                     b.Property<DateTimeOffset?>("LockoutEnd")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<long?>("MaxDataFileRows")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_data_file_rows");
+
                     b.Property<string>("NormalizedEmail")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -889,6 +893,10 @@ namespace Bank.DAL.Migrations
                     b.Property<Guid?>("LastSharedReferralJobId")
                         .HasColumnType("uuid")
                         .HasColumnName("last_shared_referral_job_id");
+
+                    b.Property<long?>("MaxDataFileRows")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_data_file_rows");
 
                     b.Property<string>("Name")
                         .IsRequired()

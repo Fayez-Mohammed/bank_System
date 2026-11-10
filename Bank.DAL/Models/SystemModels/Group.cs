@@ -11,6 +11,9 @@ public class Group : BaseEntity
 
     public bool IsActive { get; set; } = true;
 
+    // أقصى مجموع صفوف لملفات الداتا للجروب كله. null = بلا حد.
+    public long? MaxDataFileRows { get; set; }
+
     public bool ShareAdminPins { get; set; }
     public DateTime? AdminPinsSharedAt { get; set; }
 

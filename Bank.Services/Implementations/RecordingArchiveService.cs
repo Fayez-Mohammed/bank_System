@@ -20,16 +20,18 @@ public class RecordingArchiveService : IRecordingArchiveService
     private readonly AppDbContext _dbContext;
     private readonly IFileStorageService _fileStorage;
     private readonly IPermissionService _permissions;
+    private readonly IDataRowQuotaService _quota;
 
     public RecordingArchiveService(
         ILogger<RecordingArchiveService> logger, IUnitOfWork unit, AppDbContext dbContext, IFileStorageService fileStorage,
-        IPermissionService permissions)
+        IPermissionService permissions, IDataRowQuotaService quota)
     {
         _logger = logger;
         _unit = unit;
         _dbContext = dbContext;
         _fileStorage = fileStorage;
         _permissions = permissions;
+        _quota = quota;
     }
     public async Task<ApiResponse<bool>> UpdateRowAsync(
       long id, Guid currentUserId, UpdateRecordingArchiveRowDto request, CancellationToken cancellationToken = default)
@@ -394,12 +396,15 @@ public class RecordingArchiveService : IRecordingArchiveService
         }
 
         Guid dataFileId;
+        Guid? quotaGroupId = userScope.GroupId;
+        Guid quotaOwnerId = currentUserId;
+        DataFile? existingFile = null;
 
         if (hasExisting)
         {
             // النطاق اتشيك فوق في CanManageDataFileAsync (بيشمل الجروب اللي الأدمن بيديره)،
             // فمنعيدش فلترته بـ userScope.GroupId وإلا الأدمن ميلاقيش ملف جروبه.
-            var existingFile = await _dbContext.DataFiles
+            existingFile = await _dbContext.DataFiles
                 .Where(f => f.Id == request.ExistingDataFileId!.Value)
                 .FirstOrDefaultAsync(cancellationToken);
 
@@ -408,6 +413,17 @@ public class RecordingArchiveService : IRecordingArchiveService
                 return ApiResponse<ConvertArchiveToDataFileResponseDto>.Fail("ملف الداتا غير موجود.", null, 404);
             }
 
+            quotaGroupId = existingFile.GroupId;
+            quotaOwnerId = existingFile.OwnerId;
+        }
+
+        var quota = await _quota.GetForScopeAsync(quotaGroupId, quotaOwnerId, null, cancellationToken);
+        if (quota.Remaining is { } left && pendingRows.Count > left)
+            return ApiResponse<ConvertArchiveToDataFileResponseDto>.Fail(
+                DataRowQuotaMessages.Exceeded(quota, pendingRows.Count), null, 400);
+
+        if (existingFile is not null)
+        {
             dataFileId = existingFile.Id;
 
             await _dbContext.DataFiles

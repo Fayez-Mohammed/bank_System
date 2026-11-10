@@ -8,6 +8,9 @@ public interface ICheckFileService
     Task<ApiResponse<List<CheckFileSummaryDto>>> GetCheckFilesAsync(
         Guid currentUserId, CancellationToken cancellationToken = default);
 
+    Task<ApiResponse<List<BankNameDto>>> GetBanksAsync(
+        Guid currentUserId, CancellationToken cancellationToken = default);
+
     Task<ApiResponse<CheckFileSummaryDto>> UploadAsync(
         Guid uploaderId, CreateCheckFileRequestDto request, CancellationToken cancellationToken = default);
 

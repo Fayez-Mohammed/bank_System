@@ -35,6 +35,7 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         public string AdminName { get; set; } = null!;
         public int MembersCount { get; set; }
         public DateTime CreatedAt { get; set; }
+        public long? MaxDataFileRows { get; set; }
     }
 
 }

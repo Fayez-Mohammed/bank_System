@@ -52,6 +52,7 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
         builder.Property(x => x.DeviceBoundAt).HasColumnName("device_bound_at");
         builder.Property(x => x.SubscriptionExpiresAt).HasColumnName("subscription_expires_at");
         builder.Property(x => x.ExpiryReminderStage).HasColumnName("expiry_reminder_stage").HasDefaultValue(0).IsRequired();
+        builder.Property(x => x.MaxDataFileRows).HasColumnName("max_data_file_rows");
         builder.HasIndex(x => x.SubscriptionExpiresAt);
 
         builder.Property(x => x.FcmToken).HasColumnName("fcm_token").HasMaxLength(1024);

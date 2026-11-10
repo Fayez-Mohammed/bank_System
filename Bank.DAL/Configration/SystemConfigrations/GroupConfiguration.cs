@@ -27,6 +27,9 @@ public class GroupConfiguration : BaseEntityConfiguration<Group>
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(x => x.MaxDataFileRows)
+            .HasColumnName("max_data_file_rows");
+
         builder.Property(x => x.ShareAdminPins)
             .HasColumnName("share_admin_pins")
             .HasDefaultValue(false)

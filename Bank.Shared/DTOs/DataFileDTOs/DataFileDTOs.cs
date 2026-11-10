@@ -42,7 +42,9 @@ namespace Bank.Shared.DTOs.DataFileDTOs
         int TotalFilesCount,
         long GroupTotalRows,
         long CurrentUserRows,
-        string GroupName);
+        string GroupName,
+        long? MaxRows,
+        long? RemainingRows);
 
     public record DataFilesListResponseDto(
         DataFilesHeaderDto Header,

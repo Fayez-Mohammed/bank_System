@@ -51,6 +51,7 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         public Guid? GroupId { get; set; }
         public string? GroupName { get; set; }
         public DateTime? SubscriptionExpiresAt { get; set; }
+        public long? MaxDataFileRows { get; set; }
         public UserPermissionDto Permissions { get; set; } = new();
 
     }

@@ -136,4 +136,15 @@ public class SuperAdminUsersController : ControllerBase
         var result = await _superAdminService.RemoveUserFromGroupAsync(id, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+
+    /// <summary>Sets the max total data-file rows for a user who is not in a group (null = unlimited).</summary>
+    [HttpPut("{id:guid}/data-row-limit")]
+    [ProducesResponseType(typeof(ApiResponse<long?>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetDataRowLimit(Guid id, [FromBody] SetDataRowLimitDto dto, CancellationToken cancellationToken)
+    {
+        var result = await _superAdminService.SetUserDataRowLimitAsync(id, dto, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 }

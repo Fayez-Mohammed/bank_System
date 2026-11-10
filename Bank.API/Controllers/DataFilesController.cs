@@ -1,5 +1,6 @@
 ﻿using Bank.API.Authorization;
 using System.Security.Claims;
+using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.DataFileDTOs;
@@ -127,6 +128,8 @@ namespace Bank.API.Controllers
         [Produces("application/octet-stream", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
         [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
         [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> Download(Guid dataFileId, CancellationToken cancellationToken)
         {
@@ -144,6 +147,17 @@ namespace Bank.API.Controllers
             {
                 _logger.LogWarning(ex, "Download unauthorized for DataFile {DataFileId}", dataFileId);
                 return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status403Forbidden));
+            }
+            catch (DataFileExportException ex)
+            {
+                _logger.LogWarning(ex, "Download rejected for DataFile {DataFileId}", dataFileId);
+                return StatusCode(StatusCodes.Status409Conflict, ApiResponse<object>.Fail(ex.Message, null, StatusCodes.Status409Conflict));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Download failed unexpectedly for DataFile {DataFileId}", dataFileId);
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    ApiResponse<object>.Fail("حصل فشل أثناء تجهيز الملف للتحميل. حاول تاني.", null, StatusCodes.Status500InternalServerError));
             }
         }
         /// <summary>
