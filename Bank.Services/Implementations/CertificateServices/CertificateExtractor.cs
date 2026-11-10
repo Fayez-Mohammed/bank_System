@@ -551,7 +551,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                 reasons.Add($"{label}: ثقة منخفضة ({d.Votes}/{d.Total}, {d.Conf:P0})");
         }
         if (!makeRepaired) Check("المصنع", make);
-        Check("الموديل", model);
+        if (lay.ModelFromText == null) Check("الموديل", model);
         Check("اللون", color);
 
         var digits = lay.PlateDigits;
@@ -907,14 +907,24 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         var voted = Vote(results, total);
 
+        // لو أصوات اللوحة منقسمة (مفيش نص أخد أكتر من نصف القراءات الصحيحة)،
+        // فالغالب إن الحروف متباعدة و SparseText بيضيف/يبدّل حرف. في الحالة دي
+        // بنجرّب التقسيم الفعلي للحروف ونستخدمه لو طلع واثق.
+        int maxGroup = results.Count == 0 ? 0 : results.GroupBy(x => NormAr(x.Text)).Max(g => g.Count());
+        bool splitVote = results.Count >= 2 && maxGroup * 2 <= results.Count;
+
         // لو اللوحة العربية متباعدة والحروف مش متصلة، Tesseract أحياناً بيقرا
         // الحرف الأول غلط أو بيضيف حرف. بنقسّم الخلية بالـ projection ونقرا
-        // كل حرف لوحده بـ SingleChar، وبنستخدم النتيجة لو عدد الحروف مطابق.
-        if (isPlate && mustLen.HasValue &&
-            (voted.Text.Length != mustLen || voted.Votes < 2 || voted.Conf < 0.65))
+        // كل حرف لوحده، وبنستخدم النتيجة لو التقسيم مطابق.
+        bool weakVote = voted.Text.Length != mustLen || voted.Votes < 2 || voted.Conf < 0.65;
+        if (isPlate && mustLen.HasValue && (weakVote || splitVote))
         {
             var spaced = TryReadSpacedPlate(engine, bmp, sx, sy, lay, c, ct);
-            if (spaced != null) return spaced;
+            // لو القراءة العادية طولها صح، ما نستبدلهاش بقراءة متفرقة بطول مختلف
+            // (ممكن تكون دمجت حرفين أو قصّت حرف) إلا لو القراءة العادية نفسها ضعيفة.
+            if (spaced != null &&
+                (weakVote || (!spaced.Uncertain && spaced.Text.Length == voted.Text.Length)))
+                return spaced;
         }
 
         // المصنع/الموديل في سجل بيطلعوا أحياناً كـ glyph واحد مضغوط.
@@ -990,7 +1000,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         int b = (int)Math.Min(bmp.Height, (lay.PageH - c.BotPdf + 4) * sy);
         if (r <= l || b <= t) return null;
 
-        using var letters = SKBitmap.Decode(MakeCrop(bmp, l, t, r, b, 6));
+        var lettersPng = MakeCrop(bmp, l, t, r, b, 6);
+        using var letters = SKBitmap.Decode(lettersPng);
         if (letters == null) return null;
 
         int w = letters.Width, h = letters.Height;
@@ -1437,6 +1448,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         }
     }
 }
+
 
 //using System.Collections.Concurrent;
 //using System.Diagnostics;
