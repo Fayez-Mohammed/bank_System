@@ -58,6 +58,11 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             : configuredTessDir;
         var engines = int.TryParse(configuration["Certificates:OcrEngineCount"], out var n) && n > 0 ? n : 2;
         _pool = new TesseractEnginePool(tessDir, engines);
+        var araPath = Path.Combine(tessDir, "ara.traineddata");
+        _logger.LogInformation(
+            "Tesseract tessdata directory: {TessDir}; ara.traineddata: {AraPath} (exists={Exists}, size={Size})",
+            tessDir, araPath, File.Exists(araPath),
+            File.Exists(araPath) ? new FileInfo(araPath).Length : 0);
     }
 
     public void Dispose() => _pool.Dispose();
