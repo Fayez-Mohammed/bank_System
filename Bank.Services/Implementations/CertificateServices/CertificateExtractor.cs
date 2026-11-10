@@ -1098,6 +1098,16 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                 else if (raw is "0" or "O" or "o")
                     fallbackLetter = 'ه';
 
+                // لو المقطع شرطة رأسية طويلة ومفيش قراءة، دي ألف.
+                int segW = run.B - run.A + 1;
+                int segH = y1 - y0 + 1;
+                if (!fallbackLetter.HasValue && segH >= segW * 2.2)
+                {
+                    fallbackLetter = 'ا';
+                    fallbackStrong = true;
+                    fallbackConf = Math.Max(fallbackConf, 0.6);
+                }
+
                 if (fallbackLetter.HasValue)
                 {
                     letterVotes[fallbackLetter.Value] = (1, fallbackStrong ? 1 : 0, 0, fallbackConf);
