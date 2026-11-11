@@ -49,44 +49,17 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
     private readonly ILogger<CertificateExtractor> _logger;
     private readonly TesseractEnginePool _pool;
 
-    //public CertificateExtractor(IConfiguration configuration, ILogger<CertificateExtractor> logger)
-    //{
-    //    _logger = logger;
-    //    var configuredTessDir = configuration["Certificates:TessdataPath"];
-    //    var tessDir = string.IsNullOrWhiteSpace(configuredTessDir)
-    //        ? Path.Combine(AppContext.BaseDirectory, "tessdata")
-    //        : configuredTessDir;
-    //    var engines = int.TryParse(configuration["Certificates:OcrEngineCount"], out var n) && n > 0 ? n : 2;
-    //    _pool = new TesseractEnginePool(tessDir, engines);
-
-    //}
     public CertificateExtractor(IConfiguration configuration, ILogger<CertificateExtractor> logger)
     {
         _logger = logger;
-
         var configuredTessDir = configuration["Certificates:TessdataPath"];
         var tessDir = string.IsNullOrWhiteSpace(configuredTessDir)
             ? Path.Combine(AppContext.BaseDirectory, "tessdata")
             : configuredTessDir;
-
-        // 🔍 فحص وطباعة تفاصيل الموديل المحدد لتأكيد النسخة المستخدمة في الـ VPS
-        var modelPath = Path.Combine(tessDir, "ara.traineddata");
-        if (File.Exists(modelPath))
-        {
-            var fileInfo = new FileInfo(modelPath);
-            var sizeInMb = fileInfo.Length / 1024.0 / 1024.0;
-            _logger.LogInformation(" [Tesseract OCR] Using model at '{Path}' | Size: {Size:F2} MB", modelPath, sizeInMb);
-        }
-        else
-        {
-            _logger.LogError(" [Tesseract OCR] Arabic model 'ara.traineddata' NOT FOUND at expected path '{Path}'!", modelPath);
-        }
-
         var engines = int.TryParse(configuration["Certificates:OcrEngineCount"], out var n) && n > 0 ? n : 2;
-        _logger.LogInformation(" [Tesseract OCR] Initializing engine pool with {Count} engines from dir '{Dir}'", engines, tessDir);
-
         _pool = new TesseractEnginePool(tessDir, engines);
     }
+
     public void Dispose() => _pool.Dispose();
 
     // =====================================================================
@@ -461,15 +434,9 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (lay.Vin == null ||
             (!lay.Cells.ContainsKey("plate") && string.IsNullOrEmpty(lay.EnglishPlateLetters)))
             throw new InvalidDataException("شكل الشهادة مش مطابق للقالب المعروف (الـ layout مش متعرّف عليه).");
-        // بدلاً من الخيارات الافتراضية، نثبت الـ DPI و AntiAliasing بشكل واضح
+
         using var ms = new MemoryStream(pdfBytes);
-        using var bmp = Conversion.ToImage(ms, options: new RenderOptions
-        {
-            Dpi = 300,
- 
-        });
-        //using var ms = new MemoryStream(pdfBytes);
-        //using var bmp = Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 });
+        using var bmp = Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 });
         double sx = bmp.Width / lay.PageW, sy = bmp.Height / lay.PageH;
 
         // كل الحقول (بما فيها اللوحة) بالتوازي. كل مهمة بتاخد محرك من الـ pool

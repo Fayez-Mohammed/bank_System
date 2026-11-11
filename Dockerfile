@@ -43,26 +43,18 @@ ENTRYPOINT ["/app/efbundle"]
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# 1. Native deps and Font packages required for SkiaSharp & Tesseract:
-#    - tesseract-ocr : Core native engine
-#    - fonts-freefont-ttf / fonts-dejavu-core / fontconfig : Fixes PDF-to-Image text rendering gap
+# Native deps the app needs on Linux:
+#   - libtesseract / libleptonica : OCR (the Tesseract NuGet only ships Windows natives)
+#   - libfontconfig / libfreetype  : SkiaSharp (PDFtoImage)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      libfontconfig1 \
-      libfreetype6 \
-      libharfbuzz0b \
-      libglib2.0-0 \
-      tesseract-ocr \
-      fontconfig \
-      fonts-freefont-ttf \
-      fonts-dejavu-core \
-      fonts-sil-scheherazade \
- && fc-cache -f -v \
+      libfontconfig1 libfreetype6 libharfbuzz0b libglib2.0-0 \
+      tesseract-ocr tesseract-ocr-ara \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
-
-# 2. Tesseract 5.2's managed loader expects these names in the x64 directory.
+# Tesseract 5.2's managed loader expects these names in the x64 directory.
+# Ubuntu supplies the same native libraries using system SONAMEs.
 RUN test -r /lib/x86_64-linux-gnu/liblept.so.5 \
  && test -r /lib/x86_64-linux-gnu/libtesseract.so.5 \
  && mkdir -p /app/x64 \
@@ -70,11 +62,7 @@ RUN test -r /lib/x86_64-linux-gnu/liblept.so.5 \
  && ln -sf /lib/x86_64-linux-gnu/libtesseract.so.5 /app/x64/libtesseract50.so \
  && ln -sf /lib/x86_64-linux-gnu/libdl.so.2 /usr/lib/x86_64-linux-gnu/libdl.so
 
-# 3. Environment Variables & TessData Path Configuration
 ENV ASPNETCORE_URLS=http://+:8080 \
-    DOTNET_EnableDiagnostics=0 \
-    Certificates__TessdataPath=/app/tessdata \
-    TESSDATA_PREFIX=/app/tessdata
-
+    DOTNET_EnableDiagnostics=0
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Bank.API.dll"]
