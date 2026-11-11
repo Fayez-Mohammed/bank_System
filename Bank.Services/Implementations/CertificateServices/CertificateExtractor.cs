@@ -461,9 +461,15 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (lay.Vin == null ||
             (!lay.Cells.ContainsKey("plate") && string.IsNullOrEmpty(lay.EnglishPlateLetters)))
             throw new InvalidDataException("شكل الشهادة مش مطابق للقالب المعروف (الـ layout مش متعرّف عليه).");
-
+        // بدلاً من الخيارات الافتراضية، نثبت الـ DPI و AntiAliasing بشكل واضح
         using var ms = new MemoryStream(pdfBytes);
-        using var bmp = Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 });
+        using var bmp = Conversion.ToImage(ms, options: new RenderOptions
+        {
+            Dpi = 300,
+ 
+        });
+        //using var ms = new MemoryStream(pdfBytes);
+        //using var bmp = Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 });
         double sx = bmp.Width / lay.PageW, sy = bmp.Height / lay.PageH;
 
         // كل الحقول (بما فيها اللوحة) بالتوازي. كل مهمة بتاخد محرك من الـ pool
