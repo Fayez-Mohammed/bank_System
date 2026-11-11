@@ -296,6 +296,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (string.IsNullOrEmpty(plateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
         if (digitsFromFileName) reasons.Add("أرقام اللوحة اتاخدت من اسم الملف (مش من نص الشهادة)");
         if (string.IsNullOrEmpty(plateLetters)) reasons.Add("حروف اللوحة غير موجودة");
+        else if (plateLetters.Length != 3)
+            reasons.Add($"عدد حروف اللوحة غير صحيح ({plateLetters.Length})");
         if (string.IsNullOrWhiteSpace(lessor) || lessor.Trim().Length < 2)
             reasons.Add("اسم المؤجر غير موجود أو غير واضح");
 
@@ -529,6 +531,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (lay.CertNo == null) reasons.Add("رقم الشهادة غير موجود");
         if (string.IsNullOrEmpty(lay.PlateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
         if (string.IsNullOrEmpty(finalLetters)) reasons.Add("حروف اللوحة غير موجودة");
+        else if (finalLetters.Length != 3)
+            reasons.Add($"عدد حروف اللوحة غير صحيح ({finalLetters.Length})");
         // 2 أصوات كفاية لو النص نفسه متسق مع عدد glyphs؛ بعض اللوحات المضغوطة
         // بتطلع نفس الحروف الصح بأصوات قليلة/ثقة 0% من Tesseract.
         else if (mapped == null && (plate.Text.Length == 0 || plate.Votes < 2))
@@ -1011,6 +1015,74 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
     }
 
     /// <summary>
+    /// بعض اللوحات بتفصل الحروف بشرطات (ر-ل-م). Tesseract بيقرا الشرطة
+    /// كحرف إضافي، فبنمسح المكوّنات الأفقية الرفيعة قبل تقسيم الحروف.
+    /// </summary>
+    private static void RemovePlateDashes(SKBitmap bmp)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        var seen = new bool[w * h];
+        var stack = new Stack<int>();
+
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int start = y * w + x;
+                if (seen[start]) continue;
+
+                var px = bmp.GetPixel(x, y);
+                if (!(px.Red < 140 && px.Green < 140 && px.Blue < 140))
+                {
+                    seen[start] = true;
+                    continue;
+                }
+
+                var points = new List<int>();
+                int minX = x, maxX = x, minY = y, maxY = y;
+                seen[start] = true;
+                stack.Push(start);
+
+                while (stack.Count > 0)
+                {
+                    int cur = stack.Pop();
+                    int cx = cur % w, cy = cur / w;
+                    points.Add(cur);
+                    minX = Math.Min(minX, cx); maxX = Math.Max(maxX, cx);
+                    minY = Math.Min(minY, cy); maxY = Math.Max(maxY, cy);
+
+                    if (cx > 0) TryPush(cur - 1);
+                    if (cx + 1 < w) TryPush(cur + 1);
+                    if (cy > 0) TryPush(cur - w);
+                    if (cy + 1 < h) TryPush(cur + w);
+
+                    void TryPush(int idx)
+                    {
+                        if (seen[idx]) return;
+                        var p = bmp.GetPixel(idx % w, idx / w);
+                        if (p.Red < 140 && p.Green < 140 && p.Blue < 140)
+                        {
+                            seen[idx] = true;
+                            stack.Push(idx);
+                        }
+                        else
+                        {
+                            seen[idx] = true;
+                        }
+                    }
+                }
+
+                int cw = maxX - minX + 1, ch = maxY - minY + 1;
+                bool dash = cw >= 18 && ch <= 22 && cw >= ch * 1.2;
+                if (!dash) continue;
+
+                foreach (int idx in points)
+                    bmp.SetPixel(idx % w, idx / w, SKColors.White);
+            }
+        }
+    }
+
+    /// <summary>
     /// بعض خطوط سجل بترسم الحرف الواحد على شكلين (مثلاً س تطلع "لس"،
     /// ون تطلع "نا"، أو س تطلع "نس"). الـ ا/ل أو أي حرف زيادة قبل الحرف
     /// الحقيقي بتبقى أثر من رسم الحرف، فبنستبعد ا/ل وناخد آخر حرف متبقي.
@@ -1040,6 +1112,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         var lettersPng = MakeCrop(bmp, l, t, r, b, 6);
         using var letters = SKBitmap.Decode(lettersPng);
         if (letters == null) return null;
+        RemovePlateDashes(letters);
 
         int w = letters.Width, h = letters.Height;
         var dark = new bool[w];
