@@ -435,9 +435,17 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             (!lay.Cells.ContainsKey("plate") && string.IsNullOrEmpty(lay.EnglishPlateLetters)))
             throw new InvalidDataException("شكل الشهادة مش مطابق للقالب المعروف (الـ layout مش متعرّف عليه).");
 
+        // الحقول اللي اتفكّت من الخط المضمّن (EmbeddedGlyphDecoder) مش محتاجة OCR خالص:
+        // النتيجة من الـ PDF نفسه، فثابتة على Windows و Linux أياً كانت نسخة Tesseract.
+        // الـ OCR بيشتغل بس للحقول اللي ما اتفكّتش، ولو كلها اتفكّت مش بنرسم الصفحة أصلاً.
+        bool plateFromText = lay.TextPlateLetters != null;
+        var ocrKeys = new[] { "make", "model", "color", "lessor" }
+            .Where(k => !lay.TextFields.ContainsKey(k)).ToHashSet();
+        bool needImage = !plateFromText || ocrKeys.Count > 0;
+
         using var ms = new MemoryStream(pdfBytes);
-        using var bmp = Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 });
-        double sx = bmp.Width / lay.PageW, sy = bmp.Height / lay.PageH;
+        using var bmp = needImage ? Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 }) : null;
+        double sx = bmp != null ? bmp.Width / lay.PageW : 0, sy = bmp != null ? bmp.Height / lay.PageH : 0;
 
         // كل الحقول (بما فيها اللوحة) بالتوازي. كل مهمة بتاخد محرك من الـ pool
         // ونسخة مستقلة من الصورة، فالنتيجة والتصويت زي ما هما بالظبط —
@@ -448,18 +456,23 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             using var lease = await _pool.AcquireAsync(ct);
 
             SKBitmap local;
-            lock (bmpGate) local = bmp.Copy();   // نسخة آمنة لكل مهمة
+            lock (bmpGate) local = bmp!.Copy();   // نسخة آمنة لكل مهمة
 
             using (local)
                 return RunOcr(lease.Engine, local, sx, sy, lay, key, isPlate, mustLen, ct);
         }, ct);
 
-        var plateTask = RunFieldAsync("plate", true,
-                                      lay.PlateGlyphs > 0 ? lay.PlateGlyphs : null);
-        var makeTask = RunFieldAsync("make", false, null);
-        var modelTask = RunFieldAsync("model", false, null);
-        var colorTask = RunFieldAsync("color", false, null);
-        var lessorTask = RunFieldAsync("lessor", false, null);
+        Task<Decision> FieldAsync(string key) => ocrKeys.Contains(key)
+            ? RunFieldAsync(key, false, null)
+            : Task.FromResult(Decision.FromText(lay.TextFields[key]));
+
+        var plateTask = plateFromText
+            ? Task.FromResult(Decision.Empty)
+            : RunFieldAsync("plate", true, lay.PlateGlyphs > 0 ? lay.PlateGlyphs : null);
+        var makeTask = FieldAsync("make");
+        var modelTask = FieldAsync("model");
+        var colorTask = FieldAsync("color");
+        var lessorTask = FieldAsync("lessor");
 
         await Task.WhenAll(plateTask, makeTask, modelTask, colorTask, lessorTask);
 
@@ -525,6 +538,11 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             if (sb.Length == lay.EnglishPlateLetters.Length) mapped = sb.ToString();
         }
 
+        // بعدها: الحروف العربية مفكوكة من الخط المضمّن في الـ PDF (من غير OCR).
+        // نفس الملف بيدي نفس النتيجة على Windows و Linux، لأن Tesseract مش داخل في الحكاية.
+        string plateSource = mapped != null ? "english" : lay.TextPlateLetters != null ? "glyphs" : "ocr";
+        mapped ??= lay.TextPlateLetters;
+
         var finalLetters = mapped ?? plate.Text;
 
         var reasons = new List<string>();
@@ -552,7 +570,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         void Check(string label, Decision d)
         {
             if (d.Text.Length == 0 || d.Votes < 2 || d.Conf < 0.5)
-                reasons.Add($"{label}: ثقة منخفضة ({d.Votes}/{d.Total}, {d.Conf:P0})");
+                reasons.Add($"{label}: ثقة منخفضة ({d.Votes}/{d.Total}, {Math.Round(d.Conf * 100):0}%)");
         }
         if (!makeRepaired) Check("المصنع", make);
         if (lay.ModelFromText == null && !model.FromHighScale) Check("الموديل", model);
@@ -564,8 +582,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             : PlateNormalizer.Normalize(finalLetters + digits);
 
         _logger.LogInformation(
-            "Sijil certificate extracted: plate={Plate} lessor={Lessor} fromEnglish={FromEnglish} review={Review}",
-            finalLetters + digits, lessor, mapped != null, reasons.Count > 0);
+            "Sijil certificate extracted: plate={Plate} lessor={Lessor} plateSource={PlateSource} review={Review}",
+            finalLetters + digits, lessor, plateSource, reasons.Count > 0);
 
         return new CertificateExtractionResult(
             CertificateProvider.Sijil,
@@ -607,12 +625,14 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         var page = doc.GetPage(1);
         double W = page.Width, H = page.Height;
         var words = page.GetWords().ToList();
+        var glyphs = EmbeddedGlyphDecoder.Build(doc, page);
 
         string? Find(string pattern) =>
             words.Select(w => Regex.Match(w.Text, pattern)).FirstOrDefault(m => m.Success)?.Value;
 
         var certNo = Find(@"REPO-\d{3}-\d{8}");
         var cells = new Dictionary<string, CertCell>();
+        var textFields = new Dictionary<string, string>();
 
         // -------------------------------------------------------------
         // خلية "اسم المؤجر": بنثبّت على صف السجل التجاري، والاسم بيكون فوقه مباشرة،
@@ -680,6 +700,9 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
             }
 
             cells["lessor"] = new CertCell("lessor", x0, x1, cellTop, cellBot);
+            AddTextField(textFields, glyphs, "lessor", lessorRowLetters.Where(l => X0(l) >= x0 && X1(l) <= x1));
+            if (textFields.TryGetValue("lessor", out var lessorText))
+                textFields["lessor"] = RestoreLessorWordSpaces(lessorText);
         }
 
         var vinWord = words.FirstOrDefault(w =>
@@ -720,6 +743,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         string? englishPlateLetters = null;
         string? modelFromText = null;
         int plateGlyphs = 0;
+        string? textPlateLetters = null;
 
         for (int ri = 0; ri < rows.Count && ri < 3; ri++)
         {
@@ -747,6 +771,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
                     var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
                     plateGlyphs = valueLetters.Count;
+                    textPlateLetters = DecodePlateFromGlyphs(glyphs, valueLetters);
 
                     double minX = valueLetters.Min(X0);
                     if (digits.Count > 0)
@@ -809,6 +834,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                                 // عدد glyphs هنا مش موثوق (الحروف مضغوطة)، فبنخليه 0
                                 // عشان OCR ما يترفضش بسبب اختلاف عدد الحروف.
                                 plateGlyphs = 0;
+                                textPlateLetters ??= DecodePlateFromGlyphs(glyphs, valueLetters);
 
                                 double minX = Math.Max(valueLetters.Min(X0) - 2, digits.Max(X1) + 1.5);
                                 cells["plate"] = new CertCell(
@@ -822,6 +848,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     double minX = Math.Max(0, hl.Min(X0) - 15);
                     double maxX = hl.Max(X1) + 15;
                     cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
+                    // الخلية فيها العنوان ("لون المركبة:") كمان، و ExtractBestColor بيشيله زي ما بيعمل مع الـ OCR.
+                    AddTextField(textFields, glyphs, key, hl);
                 }
                 else
                 {
@@ -849,11 +877,72 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     }
 
                     cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
+                    if (key != "model" || modelFromText == null)
+                        AddTextField(textFields, glyphs, key, valueLetters);
                 }
             }
         }
 
-        return new CertLayout(W, H, certNo, vin, plateDigits, plateGlyphs, cells, englishPlateLetters, modelFromText);
+        return new CertLayout(W, H, certNo, vin, plateDigits, plateGlyphs, cells, englishPlateLetters, modelFromText,
+                              textPlateLetters, textFields);
+    }
+
+    /// <summary>بيضيف الحقل لو اتفك بالكامل وفيه حرفين عربي على الأقل؛ غير كده الـ OCR بيقراه.</summary>
+    private static void AddTextField(Dictionary<string, string> fields, EmbeddedGlyphDecoder glyphs, string key,
+                                     IEnumerable<Letter> letters)
+    {
+        if (!glyphs.HasFonts) return;
+        var text = glyphs.DecodeArabicText(letters);
+        if (text != null && text.Count(ch => ch >= '\u0621' && ch <= '\u064A') >= 2)
+            fields[key] = text;
+    }
+
+    /// <summary>
+    /// بعض الشهادات بتفصل كلمات اسم المؤجر بالمسافات المكانية بس (مفيش حرف مسافة في الـ text layer)،
+    /// فبتطلع "السعوديالفرنسي". قواعد ثابتة (نفس النتيجة على أي نظام):
+    ///  • مسافة قبل "ال" لو الكلمة لحد هنا حرفين أو أكتر وبعد "ال" حرفين أو أكتر
+    ///    (السعودي|الفرنسي، للتأجير|التمويلي؛ ومش بتلمس: جمال، خالد، الإجمالي، للتمويل، والتجارة).
+    ///  • مسافة بعد ة / ى لو بعدها حرف (الكلمة العربية مابتكملش بعدهم).
+    /// </summary>
+    internal static string RestoreLessorWordSpaces(string text)
+    {
+        var sb = new StringBuilder(text.Length + 8);
+        int wordLen = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (ch == ' ') { sb.Append(' '); wordLen = 0; continue; }
+
+            if (wordLen >= 2 && ch == 'ا' && i + 1 < text.Length && text[i + 1] == 'ل')
+            {
+                int rest = 0;
+                for (int j = i + 2; j < text.Length && text[j] != ' '; j++) rest++;
+                if (rest >= 2) { sb.Append(' '); wordLen = 0; }
+            }
+
+            sb.Append(ch);
+            wordLen++;
+            if ((ch == 'ة' || ch == 'ى') && i + 1 < text.Length && text[i + 1] != ' ')
+            {
+                sb.Append(' ');
+                wordLen = 0;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// حروف اللوحة العربية من الخط المضمّن. بنقبلها بس لو كل glyph اتفك، وكل الحروف من أبجدية
+    /// اللوحات السعودية، وعددها 1–3. غير كده null والـ OCR بيكمّل زي الأول.
+    /// </summary>
+    private static string? DecodePlateFromGlyphs(EmbeddedGlyphDecoder glyphs, List<Letter> valueLetters)
+    {
+        if (!glyphs.HasFonts || valueLetters.Count == 0) return null;
+        var text = glyphs.DecodeArabicText(valueLetters)?.Replace(" ", "");
+        if (string.IsNullOrEmpty(text)) return null;
+        text = text.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
+        if (text.Length > 3 || !text.All(ch => PlateAlphabet.Contains(ch))) return null;
+        return text;
     }
 
     // ---------------------------------------------------------------------
@@ -1477,13 +1566,22 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         double PageW, double PageH, string? CertNo, string? Vin,
         string? PlateDigits, int PlateGlyphs,
         Dictionary<string, CertCell> Cells, string? EnglishPlateLetters = null,
-        string? ModelFromText = null);
+        string? ModelFromText = null, string? TextPlateLetters = null,
+        IReadOnlyDictionary<string, string>? TextFieldsOrNull = null)
+    {
+        /// <summary>حقول عربية اتفكّت من الخط المضمّن (make/model/color/lessor).</summary>
+        public IReadOnlyDictionary<string, string> TextFields { get; } =
+            TextFieldsOrNull ?? new Dictionary<string, string>();
+    }
 
     private sealed record Decision(
         string Text, int Votes, int Total, double Conf,
         bool Uncertain = false, bool FromSpaced = false, bool FromHighScale = false)
     {
         public static Decision Empty => new("", 0, 8, 0);
+
+        /// <summary>قيمة مقروءة من الـ text layer (مش OCR): ثقة كاملة.</summary>
+        public static Decision FromText(string text) => new(text, 16, 16, 1.0);
     }
 
     /// <summary>Pool بسيط: كل محرك Tesseract بيتحمّل مرة واحدة ويتعاد استخدامه (ara.traineddata ~12MB).</summary>
