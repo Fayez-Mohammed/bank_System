@@ -106,9 +106,19 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         var page = doc.GetPage(1);
         var text = string.Join(" ", page.GetWords().Select(w => w.Text));
 
-        // معايير حاسمة لشهادات توثيق
-        if (text.Contains("ARN") ||
-            text.Contains("TAW") ||
+        // شهادات سجل لازم تتفحص الأول: رقم الشهادة REPO-xxx-xxxxxxxx
+        // أو رقم العقد CRN-xxx-xxxxxxxx موجودين في الـ text layer.
+        // من غير الفحص ده، جسم شهادة سجل نفسه فيه "سند تنفيذي"،
+        // والعنوان الإنجليزي ممكن يحتوي "TAW" (مثلاً ALARTAWYAH).
+        if (Regex.IsMatch(text, @"REPO-\d{3}-\d{8}") ||
+            Regex.IsMatch(text, @"CRN-\d{3}-\d{8}"))
+        {
+            return CertificateProvider.Sijil;
+        }
+
+        // معايير حاسمة لشهادات توثيق (كلمات كاملة، مش substring).
+        if (Regex.IsMatch(text, @"(?<![A-Z])ARN(?![A-Z])") ||
+            Regex.IsMatch(text, @"(?<![A-Z])TAW(?![A-Z])") ||
             text.Contains("توثيق") ||
             text.Contains("سند تنفيذي") ||
             Regex.IsMatch(text, @"CRN000\d+"))
@@ -269,13 +279,104 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         // الصف 0 (صف الـ VIN): الموديل في العمود الأوسط
         // الصف 1: اللوحة في العمود الأوسط
         // الصف 2: اللون في العمود الأوسط | المصنع في العمود الأيمن
+        //
+        // ملاحظة: بعض قوالب توثيق بتحط صف "الرقم التسلسلي / سنة الصنع"
+        // بين صف الـ VIN وصف اللوحة، فالإزاحة الثابتة بتقرا الصف الغلط.
+        // فبنستخدم العناوين المطبوعة (رقم اللوحة، المصنع، لون الأصل، نوع)
+        // كأساس أول، وبنرجع للإزاحة القديمة لو العنوان مش موجود.
+        bool InAsset(Word w) =>
+            w.BoundingBox.Bottom >= vinY - 60 && w.BoundingBox.Top <= vinY + 25;
+
+        List<TawToken> ValueLeftOf(Word label, double maxGap, double maxWidth)
+        {
+            var candidates = toks
+                .Where(t => SameRow(t.Word, label, 6) &&
+                            InAsset(t.Word) &&
+                            t.Word.BoundingBox.Right < label.BoundingBox.Left - 1 &&
+                            t.Word.BoundingBox.Left >= label.BoundingBox.Left - maxWidth &&
+                            !string.IsNullOrWhiteSpace(Clean(t.Text)))
+                .OrderByDescending(t => t.Word.BoundingBox.Right)
+                .ToList();
+
+            if (candidates.Count == 0) return new List<TawToken>();
+            if (label.BoundingBox.Left - candidates[0].Word.BoundingBox.Right > maxGap)
+                return new List<TawToken>();
+
+            var value = new List<TawToken>();
+            double? lastLeft = null;
+            foreach (var t in candidates)
+            {
+                if (lastLeft.HasValue && lastLeft.Value - t.Word.BoundingBox.Right > maxGap) break;
+                value.Add(t);
+                lastLeft = t.Word.BoundingBox.Left;
+            }
+            return value;
+        }
+
         string rawModel = GetCellText(0, 180, 380);
         string rawPlate = GetCellText(1, 180, 380);
         string rawColor = GetCellText(2, 180, 380);
         string rawMake = GetCellText(2, 380, 560);
 
+        var plateLabel = toks.FirstOrDefault(t =>
+            InAsset(t.Word) && Clean(t.Text) == "اللوحة" &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+        if (plateLabel != null)
+        {
+            var value = ValueLeftOf(plateLabel.Word, 40, 100);
+            if (value.Count > 0)
+                rawPlate = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+        }
+
+        var makeLabel = toks.FirstOrDefault(t =>
+            InAsset(t.Word) && Clean(t.Text) == "المصنع");
+        if (makeLabel != null)
+        {
+            var value = ValueLeftOf(makeLabel.Word, 40, 120);
+            if (value.Count > 0)
+                rawMake = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+        }
+
+        var colorLabel = toks.FirstOrDefault(t =>
+            InAsset(t.Word) && Clean(t.Text) == "لون" &&
+            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).StartsWith("الأصل")));
+        if (colorLabel != null)
+        {
+            var value = ValueLeftOf(colorLabel.Word, 40, 100);
+            if (value.Count > 0)
+                rawColor = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+        }
+
+        var modelLabel = toks
+            .Where(t => InAsset(t.Word) &&
+                        SameRow(t.Word, vinWord, 6) &&
+                        Clean(t.Text) == "نوع" &&
+                        t.Word.BoundingBox.Left < pageWidth * 0.75)
+            .OrderBy(t => t.Word.BoundingBox.Left)
+            .FirstOrDefault();
+        if (modelLabel != null)
+        {
+            var value = ValueLeftOf(modelLabel.Word, 40, 220);
+            if (value.Count > 0)
+                rawModel = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+        }
+
         var makeV = Snap(rawMake, CertificateLexicon.Makes);
         var modelV = Snap(rawModel, CertificateLexicon.Models);
+
+        // نص توثيق من الـ text layer دقيق، فلو القيمة بتبدأ بموديل معروف
+        // وفيها وصف إضافي (مثلاً "كورولا 1.8 سيدان بنزين...")، نحافظ على
+        // النص الكامل بدل ما Snap يختصره لمدخل القاموس بس.
+        var firstModelToken = rawModel
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        if (!string.IsNullOrEmpty(firstModelToken) &&
+            CertificateLexicon.Models.Any(m => NormAr(m) == NormAr(firstModelToken)) &&
+            NormAr(modelV.Value) != NormAr(rawModel))
+        {
+            modelV = (rawModel, false);
+        }
+
         var colorV = ExtractBestColor(rawColor, CertificateLexicon.Colors);
 
         // ---------- 5) اللوحة ----------
@@ -289,6 +390,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         }
 
         string plateLetters = string.Concat(Regex.Matches(rawPlate, @"[\u0621-\u064A]").Select(m => m.Value));
+        plateLetters = plateLetters.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
 
         // ---------- 6) المراجعة ----------
         var reasons = new List<string>();
@@ -865,8 +967,9 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                     double minX = valueLetters.Min(X0) - 5;
                     double maxX = Math.Max(valueLetters.Max(X1) + 5, labelLeft - 10);
 
-                    // بعض الموديلات بتتكتب لاتيني/أرقام (مثلاً MG5) والـ OCR العربي
-                    // بيقراها غلط. الـ text layer هنا سليم، فبنستخدمه مباشرة.
+                    // بعض الموديلات بتتكتب لاتيني/أرقام (مثلاً MG5) أو مختلطة
+                    // (مثلاً "ك4") والـ OCR العربي بيقراها ناقصة. الـ text layer
+                    // هنا سليم، فبنستخدمه مباشرة.
                     if (key == "model")
                     {
                         var ascii = string.Concat(valueLetters.OrderBy(X0).Select(l => l.Value)).Trim();
@@ -874,6 +977,12 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
                             ascii.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == ' ') &&
                             ascii.Any(char.IsAsciiLetter))
                             modelFromText = ascii;
+                        else if (glyphs.HasFonts)
+                        {
+                            var mixed = glyphs.DecodeMixedText(valueLetters);
+                            if (!string.IsNullOrEmpty(mixed))
+                                modelFromText = mixed;
+                        }
                     }
 
                     cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
@@ -1659,3 +1768,1667 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         }
     }
 }
+
+
+
+//using System.Collections.Concurrent;
+//using System.Diagnostics;
+//using System.Text;
+//using System.Text.RegularExpressions;
+//using Bank.Services.Helpers;
+//using Bank.Services.HangFireJobs;   // PlateNormalizer
+//using Bank.Shared.Enums;
+//using Microsoft.Extensions.Configuration;
+//using Microsoft.Extensions.Logging;
+//using PDFtoImage;
+//using SkiaSharp;
+//using Tesseract;
+//using UglyToad.PdfPig;
+//using UglyToad.PdfPig.Content;
+//using Bank.Services.Interfaces.ICertificate;
+
+//#pragma warning disable CS0618
+
+//namespace Bank.Services.Implementations.CertificateServices;
+
+///// <summary>
+///// استخراج محلي بالكامل من شهادات الاسترداد، مع كشف تلقائي للجهة المُصدِرة:
+/////  • توثيق (Tawtheeq): النص العربي مقروء مباشرة من PdfPig، من غير OCR.
+/////  • سجل (Sijil): PdfPig للنص اللاتيني/الأرقام + الحروف الإنجليزية للوحة، و Tesseract (ara) للحقول العربية.
+///// بيطلّع: اللوحة، المصنع، الموديل، اللون، اسم المؤجر.
+///// الـ Service Singleton لأن عندها Pool من محركات Tesseract (المحرك الواحد مش Thread-safe).
+///// ملف ara.traineddata مطلوب لشهادات سجل فقط.
+///// </summary>
+//public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
+//{
+//    private const string PlateAlphabet = "ابحدرسصطعقكلمنهوىي";   // حروف اللوحات السعودية
+//    private const double TawtheeqReferenceWidth = 595.0;            // عرض صفحة A4 اللي اتضبطت عليه إحداثيات توثيق
+
+//    private static readonly HashSet<string> LessorHeaderWords =
+//        new(StringComparer.Ordinal) { "اسم", "المؤجر", "طالب", "التنفيذ", "الاسم", "مسلا", "مسا" };
+
+//    private static readonly string[] LessorEntityStarts =
+//    {
+//        "شركة", "شركه", "الشركة", "الشركه", "شركات", "الشركات",
+//        "مؤسسة", "مؤسسه", "المؤسسة", "المؤسسه",
+//        "بنك", "البنك", "مصرف", "المصرف",
+//        "مصنع", "المصنع", "صندوق", "الصندوق",
+//        "هيئة", "هيئه", "الهيئة", "الهيئه",
+//        "وزارة", "وزاره", "الوزارة", "الوزاره",
+//        "جامعة", "الجامعة", "الجامعه",
+//        "مجموعة", "المجموعة"
+//    };
+
+//    private readonly ILogger<CertificateExtractor> _logger;
+//    private readonly TesseractEnginePool _pool;
+
+//    public CertificateExtractor(IConfiguration configuration, ILogger<CertificateExtractor> logger)
+//    {
+//        _logger = logger;
+//        var configuredTessDir = configuration["Certificates:TessdataPath"];
+//        var tessDir = string.IsNullOrWhiteSpace(configuredTessDir)
+//            ? Path.Combine(AppContext.BaseDirectory, "tessdata")
+//            : configuredTessDir;
+//        var engines = int.TryParse(configuration["Certificates:OcrEngineCount"], out var n) && n > 0 ? n : 2;
+//        _pool = new TesseractEnginePool(tessDir, engines);
+//    }
+
+//    public void Dispose() => _pool.Dispose();
+
+//    // =====================================================================
+//    //  Public API
+//    // =====================================================================
+//    public async Task<CertificateExtractionResult> ExtractAsync(
+//        byte[] pdfBytes, string? fileName = null, CancellationToken ct = default)
+//    {
+//        var sw = Stopwatch.StartNew();
+
+//        CertificateProvider provider;
+//        try
+//        {
+//            provider = DetectProvider(pdfBytes);
+//        }
+//        catch (Exception ex) when (ex is not OperationCanceledException)
+//        {
+//            throw new InvalidDataException("تعذّر قراءة الـ PDF: " + ex.Message, ex);
+//        }
+
+//        try
+//        {
+//            return provider == CertificateProvider.Tawtheeq
+//                ? ExtractTawtheeq(pdfBytes, fileName)
+//                : await ExtractSijilAsync(pdfBytes, ct);
+//        }
+//        finally
+//        {
+//            sw.Stop();
+//            _logger.LogInformation(
+//                "Certificate extraction finished: provider={Provider}, file={FileName}, elapsed={ElapsedMs}ms",
+//                provider, fileName ?? "(unknown)", sw.ElapsedMilliseconds);
+//        }
+//    }
+
+//    private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+//    // =====================================================================
+//    //  Provider detection
+//    // =====================================================================
+//    private static CertificateProvider DetectProvider(byte[] pdfBytes)
+//    {
+//        using var doc = PdfDocument.Open(pdfBytes);
+//        var page = doc.GetPage(1);
+//        var text = string.Join(" ", page.GetWords().Select(w => w.Text));
+
+//        // معايير حاسمة لشهادات توثيق
+//        if (text.Contains("ARN") ||
+//            text.Contains("TAW") ||
+//            text.Contains("توثيق") ||
+//            text.Contains("سند تنفيذي") ||
+//            Regex.IsMatch(text, @"CRN000\d+"))
+//        {
+//            return CertificateProvider.Tawtheeq;
+//        }
+
+//        return CertificateProvider.Sijil;
+//    }
+
+//    // =====================================================================
+//    //  توثيق: استخراج نصي مباشر (من غير OCR)
+//    //
+//    //  ده بديل كامل لـ: ExtractTawtheeq + NormalizeTawtheeqTokens
+//    //  (StripHeaderPrefixes و CleanLessorName و LessorHeaderWords زي ما هم من غير تغيير)
+//    //
+//    //  اللي اتصلّح:
+//    //   1) الـ VIN: رقم العقد (75100000480699980) 17 رقم، فكان بيتاخد على إنه VIN.
+//    //      دلوقتي بندوّر على صف "رقم الهيكل"، وبنشترط حرف إنجليزي واحد على الأقل.
+//    //   2) رقم السند: كان بيدوّر على 10xxxxx (7 أرقام)، والسندات الحالية 6 أرقام.
+//    //      دلوقتي بياخده من صف "رقم السند".
+//    //   3) عكس الحروف العربية: كان char-by-char فبيقلب (لا) لـ (ال) و (لأ) لـ (أل)،
+//    //      فبيطلع "الند كروزر" بدل "لاند كروزر"، وكلمات العناوين ما بتتشالش صح.
+//    //      دلوقتي بنعكس على مستوى الـ Letter (الـ glyph) فالـ ligature بتفضل سليمة.
+//    // =====================================================================
+//    private CertificateExtractionResult ExtractTawtheeq(byte[] pdfBytes, string? fileName)
+//    {
+//        using var doc = PdfDocument.Open(pdfBytes);
+//        var page = doc.GetPage(1);
+//        return ExtractTawtheeqFromWords(page.GetWords().ToList(), page.Width, fileName);
+//    }
+
+//    private sealed record TawToken(Word Word, string Text);
+
+//    private CertificateExtractionResult ExtractTawtheeqFromWords(List<Word> words, double pageWidth, string? fileName)
+//    {
+//        double k = pageWidth / TawtheeqReferenceWidth;
+
+//        // كل كلمة بتتحول لنصها المنطقي (RTL) مرة واحدة
+//        var toks = words.Select(w => new TawToken(w, TawtheeqLogicalText(w))).ToList();
+
+//        static string Clean(string t) => t.Replace(":", "").Replace("ـ", "").Trim();
+//        static bool SameRow(Word a, Word b, double tol = 5) =>
+//            Math.Abs(a.BoundingBox.Bottom - b.BoundingBox.Bottom) <= tol;
+
+//        // ---------- 1) رقم السند (للتحقق إن الملف شهادة فعلاً) ----------
+//        // الصف: "رقم السند: 926691". التاريخ في آخر الصفحة ("تاريخ اصدار السند") ما فيهوش كلمة "رقم" فبيتتجاهل.
+//        var certLabel = toks.FirstOrDefault(t => Clean(t.Text) == "السند" &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+
+//        string? certNo = null;
+//        if (certLabel != null)
+//        {
+//            certNo = toks
+//                .Where(o => SameRow(o.Word, certLabel.Word, 6) &&
+//                            o.Word.BoundingBox.Right <= certLabel.Word.BoundingBox.Left + 2 &&
+//                            Regex.IsMatch(Clean(o.Text), @"^\d{5,10}$"))
+//                .OrderByDescending(o => o.Word.BoundingBox.Left)          // الأقرب للعنوان
+//                .Select(o => Clean(o.Text))
+//                .FirstOrDefault();
+//        }
+
+//        // ---------- 2) الـ VIN ----------
+//        // مهم: رقم العقد (17 رقم بس) بيطابق شكل الـ VIN. فبنشترط حرف إنجليزي واحد على الأقل،
+//        // وبنفضّل الكلمة اللي على نفس صف عنوان "رقم الهيكل".
+//        var vinRegex = new Regex(@"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+
+//        static (Word? Word, string? Vin) FindVin(IEnumerable<TawToken> candidates, Regex rx)
+//        {
+//            foreach (var c in candidates)
+//            {
+//                var m = rx.Match(c.Word.Text);
+//                if (m.Success && m.Value.Any(char.IsAsciiLetter)) return (c.Word, m.Value);
+//            }
+//            return (null, null);
+//        }
+
+//        var vinLabel = toks.FirstOrDefault(t => Clean(t.Text) == "الهيكل" &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+
+//        var (vinWord, vin) = vinLabel != null
+//            ? FindVin(toks.Where(o => SameRow(o.Word, vinLabel.Word, 6)), vinRegex)
+//            : (null, null);
+
+//        if (vinWord == null)
+//            (vinWord, vin) = FindVin(toks, vinRegex);
+
+//        if (vinWord == null || vin == null)
+//            throw new InvalidDataException("شهادة توثيق بدون رقم هيكل (VIN): تعذّر تحديد جدول بيانات الأصل.");
+
+//        double vinY = vinWord.BoundingBox.Bottom;
+
+//        // ---------- 3) اسم المؤجر ----------
+//        // بين عنوان "الصفة في العقد: المؤجر" وعنوان "الصفة في العقد: المستأجر"، على يسار كلمة "الاسم" في نفس السطر.
+//        string lessor = "";
+
+//        var lessorHeader = toks.FirstOrDefault(t => Clean(t.Text).Contains("المؤجر") &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).Contains("الصفة")));
+
+//        var lesseeHeader = toks.FirstOrDefault(t => Clean(t.Text).Contains("المستأجر") &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).Contains("الصفة")));
+
+//        if (lessorHeader != null)
+//        {
+//            double topY = lessorHeader.Word.BoundingBox.Bottom;
+//            double bottomY = lesseeHeader != null ? lesseeHeader.Word.BoundingBox.Top : topY - 120;
+
+//            var nameLabel = toks.FirstOrDefault(t =>
+//                t.Word.BoundingBox.Bottom < topY &&
+//                t.Word.BoundingBox.Bottom > bottomY &&
+//                t.Word.BoundingBox.Left >= pageWidth * 0.70 &&               // خانة الاسم في أقصى اليمين
+//                (Clean(t.Text) == "الاسم" || Clean(t.Text) == "اسم"));
+
+//            if (nameLabel != null)
+//            {
+//                var lessorWords = toks
+//                    .Where(t => SameRow(t.Word, nameLabel.Word))                                          // نفس السطر
+//                    .Where(t => t.Word.BoundingBox.Right < nameLabel.Word.BoundingBox.Left &&
+//                                t.Word.BoundingBox.Left >= pageWidth * 0.40)
+//                    .OrderByDescending(t => t.Word.BoundingBox.Left)                                      // من اليمين لليسار
+//                    .Select(t => t.Word);
+
+//                lessor = CleanLessorName(NormalizeTawtheeqTokens(lessorWords));
+//            }
+//        }
+
+//        // ---------- 4) جدول الأصل (من صف الـ VIN وحتى 55 نقطة تحته) ----------
+//        var assetWords = words
+//            .Where(w => w.BoundingBox.Bottom >= vinY - 55 && w.BoundingBox.Top <= vinY + 20)
+//            .ToList();
+
+//        var rows = new List<List<Word>>();
+//        foreach (var w in assetWords.OrderByDescending(w => w.BoundingBox.Bottom))
+//        {
+//            var r = rows.FirstOrDefault(row => Math.Abs(row[0].BoundingBox.Bottom - w.BoundingBox.Bottom) < 6);
+//            if (r == null) rows.Add(new List<Word> { w });
+//            else r.Add(w);
+//        }
+
+//        int vRow = rows.FindIndex(r => r.Any(w => ReferenceEquals(w, vinWord)));
+//        if (vRow == -1) vRow = 0;
+
+//        string GetCellText(int rowOffset, double minX, double maxX)
+//        {
+//            int targetRow = vRow + rowOffset;
+//            if (targetRow >= rows.Count) return "";
+//            var cellWords = rows[targetRow]
+//                .Where(w =>
+//                {
+//                    double midX = (w.BoundingBox.Left + w.BoundingBox.Right) / 2.0;
+//                    return midX >= minX * k && midX <= maxX * k;
+//                })
+//                .OrderByDescending(w => w.BoundingBox.Left);   // من اليمين لليسار
+
+//            return NormalizeTawtheeqTokens(cellWords);
+//        }
+
+//        // الصف 0 (صف الـ VIN): الموديل في العمود الأوسط
+//        // الصف 1: اللوحة في العمود الأوسط
+//        // الصف 2: اللون في العمود الأوسط | المصنع في العمود الأيمن
+//        string rawModel = GetCellText(0, 180, 380);
+//        string rawPlate = GetCellText(1, 180, 380);
+//        string rawColor = GetCellText(2, 180, 380);
+//        string rawMake = GetCellText(2, 380, 560);
+
+//        var makeV = Snap(rawMake, CertificateLexicon.Makes);
+//        var modelV = Snap(rawModel, CertificateLexicon.Models);
+//        var colorV = ExtractBestColor(rawColor, CertificateLexicon.Colors);
+
+//        // ---------- 5) اللوحة ----------
+//        var digitsMatch = Regex.Match(rawPlate, @"\d+");
+//        string plateDigits = digitsMatch.Success ? digitsMatch.Value : "";
+//        var digitsFromFileName = false;
+//        if (string.IsNullOrEmpty(plateDigits) && !string.IsNullOrEmpty(fileName))
+//        {
+//            var fnDigits = Regex.Match(fileName, @"\d{3,4}");
+//            if (fnDigits.Success) { plateDigits = fnDigits.Value; digitsFromFileName = true; }
+//        }
+
+//        string plateLetters = string.Concat(Regex.Matches(rawPlate, @"[\u0621-\u064A]").Select(m => m.Value));
+
+//        // ---------- 6) المراجعة ----------
+//        var reasons = new List<string>();
+//        if (string.IsNullOrEmpty(certNo)) reasons.Add("رقم السند غير موجود");
+//        if (string.IsNullOrEmpty(plateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
+//        if (digitsFromFileName) reasons.Add("أرقام اللوحة اتاخدت من اسم الملف (مش من نص الشهادة)");
+//        if (string.IsNullOrEmpty(plateLetters)) reasons.Add("حروف اللوحة غير موجودة");
+//        else if (plateLetters.Length != 3)
+//            reasons.Add($"عدد حروف اللوحة غير صحيح ({plateLetters.Length})");
+//        if (string.IsNullOrWhiteSpace(lessor) || lessor.Trim().Length < 2)
+//            reasons.Add("اسم المؤجر غير موجود أو غير واضح");
+
+//        var normalized = string.IsNullOrEmpty(plateLetters) && string.IsNullOrEmpty(plateDigits)
+//            ? null
+//            : PlateNormalizer.Normalize(plateLetters + plateDigits);
+
+//        _logger.LogInformation(
+//            "Tawtheeq certificate extracted natively: plate={Plate} lessor={Lessor} review={Review}",
+//            plateLetters + plateDigits, lessor, reasons.Count > 0);
+
+//        return new CertificateExtractionResult(
+//            CertificateProvider.Tawtheeq,
+//            plateLetters, NullIfEmpty(plateDigits), normalized,
+//            NullIfEmpty(makeV.Value), NullIfEmpty(modelV.Value), NullIfEmpty(colorV.Value), NullIfEmpty(lessor),
+//            reasons.Count > 0, reasons);
+//    }
+
+//    /// <summary>
+//    /// النص المنطقي (RTL) للكلمة.
+//    /// ملفات توثيق بتخزّن الحروف العربية بالترتيب البصري (شمال→يمين)، فلازم نعكسها.
+//    /// العكس بيتم على مستوى الـ Letter مش الحرف: الـ ligatures (لا، لأ، لإ، لآ، لى) بتيجي كـ glyph واحد
+//    /// قيمته حرفين، ولو عكسنا الحروف واحد واحد هتبوظ ("لاند" → "الند"، "الأصل" → "األصل").
+//    /// الأرقام والإنجليزي ترتيبها البصري هو المنطقي، فبتتسيب زي ما هي.
+//    /// </summary>
+//    private static string TawtheeqLogicalText(Word word)
+//    {
+//        var text = word.Text;
+//        if (!text.Any(c => c >= '\u0600' && c <= '\u06FF')) return text;
+
+//        var letters = word.Letters.OrderBy(l => l.GlyphRectangle.Left).ToList();   // بصرياً: شمال → يمين
+//        var sb = new StringBuilder(text.Length);
+//        for (int i = letters.Count - 1; i >= 0; i--)
+//            sb.Append(letters[i].Value.Normalize(NormalizationForm.FormKC));
+//        return sb.ToString();
+//    }
+
+//    private static string NormalizeTawtheeqTokens(IEnumerable<Word> words)
+//    {
+//        var cleanTokens = new List<string>();
+//        foreach (var word in words)
+//        {
+//            var w = TawtheeqLogicalText(word).Replace(":", "").Replace("ـ", "").Trim();
+//            if (string.IsNullOrWhiteSpace(w)) continue;
+
+//            // استبعاد العناوين الثابتة (نوع، الأصل، رقم، اللوحة، لون، المصنع ...)
+//            if (CertificateLexicon.TawtheeqStopWords.Contains(w)) continue;
+
+//            cleanTokens.Add(w);
+//        }
+
+//        return StripHeaderPrefixes(string.Join(" ", cleanTokens).Trim());
+//    }
+
+//    private static string StripHeaderPrefixes(string text)
+//    {
+//        if (string.IsNullOrWhiteSpace(text)) return "";
+
+//        string[] prefixes =
+//        {
+//            "نوع الأصل", "نوع الاصل", "نوع المركبة", "نوع المركبه", "نوع",
+//            "المصنع", "الماركة", "الماركه", "الموديل", "طراز", "ماركة",
+//            "لون الأصل", "لون الاصل", "لون المركبة", "لون المركبه", "لون",
+//            "رقم اللوحة", "رقم اللوحه", "رقم الهيكل", "رقم", "الاسم"
+//        };
+
+//        string cleaned = text.Replace(":", " ").Trim();
+//        foreach (var p in prefixes.OrderByDescending(p => p.Length))
+//        {
+//            if (cleaned.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+//                cleaned = cleaned.Substring(p.Length).Trim();
+//        }
+
+//        return cleaned;
+//    }
+
+//    /// <summary>
+//    /// تنظيف اسم المؤجر من بقايا العناوين. بنشيل كلمات العناوين كـ tokens كاملة (مش substring)،
+//    /// وأي حرف منفصل (ا م و ر) متبقي من حواف العنوان بنشيله من الأطراف بس، عشان "و" جوه اسم شركة ماتتشالش.
+//    /// </summary>
+//    private static string TrimLessorNoisePrefix(string text)
+//    {
+//        if (string.IsNullOrWhiteSpace(text)) return text;
+
+//        var tokens = text.Replace(":", " ")
+//            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+//        int firstEntity = -1;
+//        for (int i = 0; i < tokens.Length; i++)
+//        {
+//            if (LessorEntityStarts.Any(p => tokens[i].StartsWith(p, StringComparison.Ordinal)))
+//            {
+//                firstEntity = i;
+//                break;
+//            }
+//        }
+
+//        return firstEntity > 0 ? string.Join(" ", tokens.Skip(firstEntity)) : string.Join(" ", tokens);
+//    }
+
+//    private static string CleanLessorName(string text)
+//    {
+//        if (string.IsNullOrWhiteSpace(text)) return "";
+
+//        var tokens = TrimLessorNoisePrefix(text).Replace(":", " ")
+//            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+//            .Where(t => !LessorHeaderWords.Contains(t))
+//            .ToList();
+
+//        while (tokens.Count > 0 && tokens[0].Length == 1 && "امور".Contains(tokens[0])) tokens.RemoveAt(0);
+//        while (tokens.Count > 0 && tokens[^1].Length == 1 && "امور".Contains(tokens[^1])) tokens.RemoveAt(tokens.Count - 1);
+
+//        return string.Join(" ", tokens);
+//    }
+
+//    // =====================================================================
+//    //  سجل: PdfPig (هندسة + لاتيني) + OCR محلي للحقول العربية
+//    // =====================================================================
+//    private async Task<CertificateExtractionResult> ExtractSijilAsync(byte[] pdfBytes, CancellationToken ct)
+//    {
+//        CertLayout lay;
+//        try
+//        {
+//            lay = ReadSijilLayout(pdfBytes);
+//        }
+//        catch (Exception ex) when (ex is not OperationCanceledException)
+//        {
+//            throw new InvalidDataException("تعذّر قراءة الـ PDF: " + ex.Message, ex);
+//        }
+
+//        if (lay.CertNo == null && lay.Vin == null)
+//            throw new InvalidDataException("الملف مش شهادة استرداد معروفة (مفيش رقم شهادة ولا VIN).");
+//        // لو اللوحة الإنجليزية موجودة في الـ text layer، مش محتاجين خلية OCR للوحة.
+//        if (lay.Vin == null ||
+//            (!lay.Cells.ContainsKey("plate") && string.IsNullOrEmpty(lay.EnglishPlateLetters)))
+//            throw new InvalidDataException("شكل الشهادة مش مطابق للقالب المعروف (الـ layout مش متعرّف عليه).");
+
+//        // الحقول اللي اتفكّت من الخط المضمّن (EmbeddedGlyphDecoder) مش محتاجة OCR خالص:
+//        // النتيجة من الـ PDF نفسه، فثابتة على Windows و Linux أياً كانت نسخة Tesseract.
+//        // الـ OCR بيشتغل بس للحقول اللي ما اتفكّتش، ولو كلها اتفكّت مش بنرسم الصفحة أصلاً.
+//        bool plateFromText = lay.TextPlateLetters != null;
+//        var ocrKeys = new[] { "make", "model", "color", "lessor" }
+//            .Where(k => !lay.TextFields.ContainsKey(k)).ToHashSet();
+//        bool needImage = !plateFromText || ocrKeys.Count > 0;
+
+//        using var ms = new MemoryStream(pdfBytes);
+//        using var bmp = needImage ? Conversion.ToImage(ms, options: new RenderOptions { Dpi = 300 }) : null;
+//        double sx = bmp != null ? bmp.Width / lay.PageW : 0, sy = bmp != null ? bmp.Height / lay.PageH : 0;
+
+//        // كل الحقول (بما فيها اللوحة) بالتوازي. كل مهمة بتاخد محرك من الـ pool
+//        // ونسخة مستقلة من الصورة، فالنتيجة والتصويت زي ما هما بالظبط —
+//        // الفرق إن الوقت بيتقسم على المحركات.
+//        object bmpGate = new();
+//        Task<Decision> RunFieldAsync(string key, bool isPlate, int? mustLen) => Task.Run(async () =>
+//        {
+//            using var lease = await _pool.AcquireAsync(ct);
+
+//            SKBitmap local;
+//            lock (bmpGate) local = bmp!.Copy();   // نسخة آمنة لكل مهمة
+
+//            using (local)
+//                return RunOcr(lease.Engine, local, sx, sy, lay, key, isPlate, mustLen, ct);
+//        }, ct);
+
+//        Task<Decision> FieldAsync(string key) => ocrKeys.Contains(key)
+//            ? RunFieldAsync(key, false, null)
+//            : Task.FromResult(Decision.FromText(lay.TextFields[key]));
+
+//        var plateTask = plateFromText
+//            ? Task.FromResult(Decision.Empty)
+//            : RunFieldAsync("plate", true, lay.PlateGlyphs > 0 ? lay.PlateGlyphs : null);
+//        var makeTask = FieldAsync("make");
+//        var modelTask = FieldAsync("model");
+//        var colorTask = FieldAsync("color");
+//        var lessorTask = FieldAsync("lessor");
+
+//        await Task.WhenAll(plateTask, makeTask, modelTask, colorTask, lessorTask);
+
+//        var plate = await plateTask;
+//        var make = await makeTask;
+//        var model = await modelTask;
+//        var color = await colorTask;
+//        var lessorOcr = await lessorTask;
+
+//        var makeV = Snap(make.Text, CertificateLexicon.Makes);
+//        bool makeRepaired = false;
+
+//        // لو OCR سقط آخر حرف من اسم مصنع معروف (مثلاً "كي" بدل "كيا")،
+//        // والقواميس فيها مرشح واحد فقط بنفس الاسم + حرف واحد، نكمّله.
+//        if (!makeV.Snapped)
+//        {
+//            var repaired = RepairTruncatedLexiconWord(make.Text, CertificateLexicon.Makes);
+//            if (repaired != null)
+//            {
+//                makeV = (repaired, true);
+//                makeRepaired = true;
+//            }
+//        }
+
+//        // لو OCR قرا المصنع بثقة عالية وأغلب الأصوات متفقين، وعربيته مختلفة
+//        // عن أقرب مدخل في القاموس، نحافظ على النص المقروء بدل ما Snap يبدّله
+//        // بمصنع تاني قريب في الحروف (مثلاً "ليكزس" → "لكزس").
+//        if (!makeRepaired && make.Text.Length > 0 && make.Votes >= 2 &&
+//            make.Votes * 2 >= make.Total && make.Conf >= 0.6 &&
+//            NormAr(makeV.Value) != NormAr(make.Text))
+//        {
+//            makeV = (StripHeaderPrefixes(make.Text), false);
+//        }
+
+//        var modelText = lay.ModelFromText ?? model.Text;
+//        var modelV = Snap(modelText, CertificateLexicon.Models);
+
+//        // نفس القاعدة للموديل: نحافظ على قراءة OCR الواضحة بدل استبدالها
+//        // بموديل مختلف قريب في الحروف (مثلاً "تورس سيدان" → "يارس سيدان").
+//        if (lay.ModelFromText == null && model.Text.Length > 0 &&
+//            model.Votes >= 2 && model.Conf >= 0.8 &&
+//            NormAr(modelV.Value) != NormAr(model.Text))
+//        {
+//            modelV = (StripHeaderPrefixes(model.Text), false);
+//        }
+
+//        var colorV = ExtractBestColor(color.Text, CertificateLexicon.Colors);
+//        var lessor = CleanLessorName(lessorOcr.Text);
+
+//        // حروف اللوحة: اللاتيني (Text Layer) أولاً، والـ OCR للتأكيد/Fallback
+//        string? mapped = null;
+//        if (!string.IsNullOrEmpty(lay.EnglishPlateLetters))
+//        {
+//            var sb = new StringBuilder();
+//            foreach (var ch in lay.EnglishPlateLetters.ToUpperInvariant())
+//            {
+//                if (CertificateLexicon.EnglishToArabicPlateLetters.TryGetValue(ch, out var ar))
+//                    sb.Append(ar);
+//                // بعض الشهادات بتستخدم M لميم بدل Z؛ القاموس الأساسي مش فيه M.
+//                else if (ch == 'M')
+//                    sb.Append('م');
+//            }
+//            if (sb.Length == lay.EnglishPlateLetters.Length) mapped = sb.ToString();
+//        }
+
+//        // بعدها: الحروف العربية مفكوكة من الخط المضمّن في الـ PDF (من غير OCR).
+//        // نفس الملف بيدي نفس النتيجة على Windows و Linux، لأن Tesseract مش داخل في الحكاية.
+//        string plateSource = mapped != null ? "english" : lay.TextPlateLetters != null ? "glyphs" : "ocr";
+//        mapped ??= lay.TextPlateLetters;
+
+//        var finalLetters = mapped ?? plate.Text;
+
+//        var reasons = new List<string>();
+//        if (lay.CertNo == null) reasons.Add("رقم الشهادة غير موجود");
+//        if (string.IsNullOrEmpty(lay.PlateDigits)) reasons.Add("أرقام اللوحة غير موجودة");
+//        if (string.IsNullOrEmpty(finalLetters)) reasons.Add("حروف اللوحة غير موجودة");
+//        else if (finalLetters.Length != 3)
+//            reasons.Add($"عدد حروف اللوحة غير صحيح ({finalLetters.Length})");
+//        // 2 أصوات كفاية لو النص نفسه متسق مع عدد glyphs؛ بعض اللوحات المضغوطة
+//        // بتطلع نفس الحروف الصح بأصوات قليلة/ثقة 0% من Tesseract.
+//        else if (mapped == null && (plate.Text.Length == 0 || plate.Votes < 2))
+//            reasons.Add($"اتفاق ضعيف على حروف اللوحة ({plate.Votes}/{plate.Total})");
+//        // لو الحروف اتاخدت من اللوحة الإنجليزية (mapped) فهي المصدر الأدق،
+//        // ومش منطقي نرفضها بسبب عدد glyphs اللوحة العربية (ممكن تشمل فاصل/ligature).
+//        else if (mapped == null && lay.PlateGlyphs > 0 && finalLetters.Length != lay.PlateGlyphs &&
+//                 !plate.FromSpaced)
+//            reasons.Add("عدد حروف اللوحة لا يطابق عدد الـ glyphs في الشهادة");
+
+//        // اللوحة المتفرقة بتتقرأ بتقسيم الحروف، ولو الثقة مش عالية بتحتاج مراجعة.
+//        if (mapped == null && plate.Uncertain)
+//            reasons.Add("حروف اللوحة متفرقة وثقة قراءتها غير كافية للمراجعة");
+//        if (string.IsNullOrWhiteSpace(lessor) || lessor.Trim().Length < 2)
+//            reasons.Add("اسم المؤجر غير موجود أو غير واضح");
+
+//        void Check(string label, Decision d)
+//        {
+//            if (d.Text.Length == 0 || d.Votes < 2 || d.Conf < 0.5)
+//                reasons.Add($"{label}: ثقة منخفضة ({d.Votes}/{d.Total}, {Math.Round(d.Conf * 100):0}%)");
+//        }
+//        if (!makeRepaired) Check("المصنع", make);
+//        if (lay.ModelFromText == null && !model.FromHighScale) Check("الموديل", model);
+//        Check("اللون", color);
+
+//        var digits = lay.PlateDigits;
+//        var normalized = string.IsNullOrEmpty(finalLetters) && string.IsNullOrEmpty(digits)
+//            ? null
+//            : PlateNormalizer.Normalize(finalLetters + digits);
+
+//        _logger.LogInformation(
+//            "Sijil certificate extracted: plate={Plate} lessor={Lessor} plateSource={PlateSource} review={Review}",
+//            finalLetters + digits, lessor, plateSource, reasons.Count > 0);
+
+//        return new CertificateExtractionResult(
+//            CertificateProvider.Sijil,
+//            finalLetters, digits, normalized,
+//            NullIfEmpty(makeV.Value), NullIfEmpty(modelV.Value), NullIfEmpty(colorV.Value), NullIfEmpty(lessor),
+//            reasons.Count > 0, reasons);
+//    }
+
+//    // ---------------------------------------------------------------------
+//    //  سجل: هندسة الصفحة بـ PdfPig
+//    // ---------------------------------------------------------------------
+//    private static double X0(Letter l) => Math.Min(l.StartBaseLine.X, l.EndBaseLine.X);
+//    private static double X1(Letter l) => Math.Max(l.StartBaseLine.X, l.EndBaseLine.X);
+
+//    // تجميع الحروف إلى كتل أفقية متجاورة (من اليمين لليسار)
+//    private static List<List<Letter>> Cluster(IEnumerable<Letter> letters, double gap)
+//    {
+//        var clusters = new List<List<Letter>>();
+//        double minX0 = 0;
+//        foreach (var l in letters.OrderByDescending(X1))
+//        {
+//            if (clusters.Count > 0 && minX0 - X1(l) < gap)
+//            {
+//                clusters[^1].Add(l);
+//                minX0 = Math.Min(minX0, X0(l));
+//            }
+//            else
+//            {
+//                clusters.Add(new List<Letter> { l });
+//                minX0 = X0(l);
+//            }
+//        }
+//        return clusters;
+//    }
+
+//    private static CertLayout ReadSijilLayout(byte[] pdfBytes)
+//    {
+//        using var doc = PdfDocument.Open(pdfBytes);
+//        var page = doc.GetPage(1);
+//        double W = page.Width, H = page.Height;
+//        var words = page.GetWords().ToList();
+//        var glyphs = EmbeddedGlyphDecoder.Build(doc, page);
+
+//        string? Find(string pattern) =>
+//            words.Select(w => Regex.Match(w.Text, pattern)).FirstOrDefault(m => m.Success)?.Value;
+
+//        var certNo = Find(@"REPO-\d{3}-\d{8}");
+//        var cells = new Dictionary<string, CertCell>();
+//        var textFields = new Dictionary<string, string>();
+
+//        // -------------------------------------------------------------
+//        // خلية "اسم المؤجر": بنثبّت على صف السجل التجاري، والاسم بيكون فوقه مباشرة،
+//        // قبل عنوان "اسم المؤجر:" الواقع في أقصى اليمين.
+//        //
+//        // مهم: بعض الشهادات السجل التجاري بتاعها مش بيبدأ بـ 101 (مثلاً 4030001588)،
+//        // وكان الكود بيرجع للرقم الوطني الموحد (700…) وبالتالي يقصّ صف غلط ويطلع اسم المؤجر
+//        // حرف واحد. دلوقتي بنختار صف السجل التجاري أي كان بادئته من الصف اللي فوق الرقم
+//        // الوطني الموحد مباشرة. وبنستبعد أرقام الفوتر (y في آخر الصفحة).
+//        // -------------------------------------------------------------
+//        // الرقم الوطني الموحد 10 أرقام ويبدأ بـ 7، مش شرط يكون 700…
+//        // (مثال: 7012309998). لو قصرناها على 700 كانت شهادات كتير بتفشل.
+//        var unifiedNoWord = words
+//            .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"^7\d{9}$"))
+//            .OrderByDescending(w => w.BoundingBox.Bottom)
+//            .FirstOrDefault();
+
+//        // مهم: السجل التجاري بنختاره من الصف اللي فوق الرقم الوطني الموحد مباشرة،
+//        // مش أي رقم يبدأ بـ 101 في الصفحة. لأن في شهادات كتير رقم المستأجر نفسه
+//        // بيبدأ بـ 101، وكان الكود بياخده بالغلط ويقصّ اسم المستأجر بدل اسم المؤجر.
+//        Word? crWord = null;
+//        if (unifiedNoWord != null)
+//        {
+//            crWord = words
+//                .Where(w => Regex.IsMatch(w.Text, @"^\d{10}$") &&
+//                            w.BoundingBox.Bottom > unifiedNoWord.BoundingBox.Bottom + 8 &&
+//                            w.BoundingBox.Bottom < unifiedNoWord.BoundingBox.Bottom + 30 &&
+//                            w.BoundingBox.Right > unifiedNoWord.BoundingBox.Left - 20 &&
+//                            w.BoundingBox.Left < unifiedNoWord.BoundingBox.Right + 20)
+//                .OrderByDescending(w => w.BoundingBox.Bottom)
+//                .FirstOrDefault();
+//        }
+
+//        // Fallback لو مفيش رقم موحد: أول سجل تجاري 101… في النص العلوي.
+//        crWord ??= words
+//            .Where(w => w.BoundingBox.Bottom > H * 0.5 && Regex.IsMatch(w.Text, @"101\d{7}"))
+//            .OrderByDescending(w => w.BoundingBox.Bottom)
+//            .FirstOrDefault();
+
+//        if (unifiedNoWord != null || crWord != null)
+//        {
+//            var anchor = crWord ?? unifiedNoWord!;
+//            double refY = anchor.BoundingBox.Top;
+//            double cellTop = refY + 26, cellBot = refY + 7;
+
+//            // نحدد حدود اسم المؤجر من الحروف الفعلية في صف الاسم، بدل عرض ثابت.
+//            // كده الأسماء الطويلة (مثل "شركة عبداللطيف جميل المتحدة للتمويل")
+//            // مش بيتقص منها الجزء الشمال، وفي نفس الوقت مش بنضم مساحة فاضية
+//            // بتخلّي OCR يطلّع ضوضاء قبل الاسم.
+//            var lessorRowLetters = page.Letters
+//                .Where(l => !string.IsNullOrWhiteSpace(l.Value) &&
+//                            l.StartBaseLine.Y > refY + 5 && l.StartBaseLine.Y < refY + 20 &&
+//                            X0(l) > W * 0.15 && X0(l) < W * 0.82)
+//                .ToList();
+
+//            double x0 = lessorRowLetters.Count > 0 ? lessorRowLetters.Min(X0) - 10 : W * 0.50;
+//            double x1 = lessorRowLetters.Count > 0 ? lessorRowLetters.Max(X1) + 10 : W * 0.78;
+//            x0 = Math.Max(W * 0.10, x0);
+//            x1 = Math.Min(W * 0.82, x1);
+
+//            if (x1 <= x0)
+//            {
+//                x0 = W * 0.50;
+//                x1 = W * 0.78;
+//            }
+
+//            cells["lessor"] = new CertCell("lessor", x0, x1, cellTop, cellBot);
+//            AddTextField(textFields, glyphs, "lessor", lessorRowLetters.Where(l => X0(l) >= x0 && X1(l) <= x1));
+//            if (textFields.TryGetValue("lessor", out var lessorText))
+//                textFields["lessor"] = RestoreLessorWordSpaces(lessorText);
+//        }
+
+//        var vinWord = words.FirstOrDefault(w =>
+//        {
+//            var m = Regex.Match(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+//            return m.Success && m.Value.Any(char.IsLetter) && m.Value.Any(char.IsDigit);
+//        });
+
+//        // بعض الشهادات رقم الهيكل فيها قصير (مثلاً 3023572) مش 17 حرف.
+//        // بنقبل 6–20 حرف/رقم في نطاق قسم بيانات الأصل المؤجر.
+//        vinWord ??= words
+//            .Where(w => w.BoundingBox.Bottom > H * 0.30 && w.BoundingBox.Bottom < H * 0.60 &&
+//                        Regex.IsMatch(w.Text, @"^[A-HJ-NPR-Z0-9]{6,20}$") &&
+//                        w.Text.Any(char.IsDigit))
+//            .OrderBy(w => w.BoundingBox.Bottom)
+//            .FirstOrDefault();
+
+//        if (vinWord == null)
+//            return new CertLayout(W, H, certNo, null, null, 0, cells);
+
+//        var vinMatch = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}");
+//        var vin = vinMatch.Success ? vinMatch.Value : vinWord.Text;
+//        double vinBase = vinWord.Letters.Average(l => l.StartBaseLine.Y);
+
+//        // حروف قسم "بيانات الأصل المؤجر": من صف الـ VIN لحد ~55pt فوقه (العنوان خارج النطاق)
+//        var asset = page.Letters.Where(l => l.Value != " " &&
+//                                            l.StartBaseLine.Y > vinBase - 6 && l.StartBaseLine.Y < vinBase + 55).ToList();
+//        var rows = new List<List<Letter>>();
+//        foreach (var l in asset.OrderByDescending(l => l.StartBaseLine.Y))
+//        {
+//            var row = rows.FirstOrDefault(r => Math.Abs(r[0].StartBaseLine.Y - l.StartBaseLine.Y) < 4);
+//            if (row == null) rows.Add(new List<Letter> { l }); else row.Add(l);
+//        }
+
+//        // الصف 0: لوحة عربي | المصنع    الصف 1: لوحة إنجليزي | الموديل    الصف 2: اللون | VIN
+//        string?[,] map = { { "plate", "make" }, { "english_plate", "model" }, { "color", null } };
+//        string? plateDigits = null;
+//        string? englishPlateLetters = null;
+//        string? modelFromText = null;
+//        int plateGlyphs = 0;
+//        string? textPlateLetters = null;
+
+//        for (int ri = 0; ri < rows.Count && ri < 3; ri++)
+//        {
+//            var row = rows[ri];
+//            double baseY = row.Average(l => l.StartBaseLine.Y);
+//            double size = row.Select(l => l.PointSize).Where(s => s > 0).DefaultIfEmpty(8).Average();
+//            double topPdf = baseY + 1.25 * size, botPdf = baseY - 0.55 * size;
+
+//            for (int half = 0; half < 2; half++)
+//            {
+//                var key = map[ri, half];
+//                if (key == null) continue;
+
+//                var hl = row.Where(l => (half == 0) == ((X0(l) + X1(l)) / 2 < W / 2)).ToList();
+//                if (hl.Count == 0) continue;
+
+//                if (key == "plate")
+//                {
+//                    var digits = hl.Where(l => l.Value.Length == 1 && char.IsAsciiDigit(l.Value[0])).OrderBy(X0).ToList();
+//                    plateDigits = digits.Count > 0 ? string.Concat(digits.Select(d => d.Value)) : null;
+
+//                    var nonDigits = hl.Except(digits).ToList();
+//                    var clusters = Cluster(nonDigits, 10);
+//                    if (clusters.Count < 2) continue;
+
+//                    var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
+//                    plateGlyphs = valueLetters.Count;
+//                    textPlateLetters = DecodePlateFromGlyphs(glyphs, valueLetters);
+
+//                    double minX = valueLetters.Min(X0);
+//                    if (digits.Count > 0)
+//                    {
+//                        double maxDigitX = digits.Max(X1);
+//                        minX = Math.Max(minX - 2, maxDigitX + 1.5);
+//                    }
+//                    cells[key] = new CertCell(key, minX, valueLetters.Max(X1) + 12, topPdf, botPdf);
+//                }
+//                else if (key == "english_plate")
+//                {
+//                    // الترتيب من اليمين لليسار ليطابق اتجاه قراءة الحروف العربية في اللوحة.
+//                    // الـ token ممكن يكون حرف واحد، كلمة كاملة ("GAA")، أو حروف + أرقام
+//                    // ملزوقة ("R4979"). بناخد الحروف فقط من كل token ونعكسها.
+//                    var engTokens = hl.Where(l => l.Value.Any(char.IsAsciiLetter))
+//                                      .OrderByDescending(X0)
+//                                      .Select(l => new string(
+//                                          l.Value.Where(char.IsAsciiLetter).Reverse().ToArray()))
+//                                      .Where(s => s.Length > 0)
+//                                      .ToArray();
+//                    if (engTokens.Length > 0)
+//                        englishPlateLetters = string.Concat(engTokens);
+
+//                    // أرقام اللوحة ممكن تكون كلمة واحدة (مثلاً "8060")
+//                    // أو ملزوقة بحروف (مثلاً "R4979").
+//                    if (string.IsNullOrEmpty(plateDigits))
+//                    {
+//                        var digitWord = hl.FirstOrDefault(l =>
+//                            l.Value.Length >= 3 && l.Value.All(char.IsAsciiDigit));
+//                        if (digitWord != null)
+//                            plateDigits = digitWord.Value;
+//                        else
+//                        {
+//                            var mixed = hl.FirstOrDefault(l =>
+//                                l.Value.Count(char.IsAsciiDigit) >= 3 &&
+//                                l.Value.Any(char.IsAsciiLetter));
+//                            if (mixed != null)
+//                                plateDigits = new string(mixed.Value.Where(char.IsAsciiDigit).ToArray());
+//                        }
+//                    }
+
+//                    // بعض الشهادات بتحط اللوحة العربية في صف اللوحة الإنجليزية
+//                    // (صف اللوحة العربية بيكون فيه العنوان فقط بدون قيمة).
+//                    // لو خلية الـ plate ما اتعملتش، اقراها من الصف ده.
+//                    if (!cells.ContainsKey("plate"))
+//                    {
+//                        var digits = hl.Where(l => l.Value.Length == 1 && char.IsAsciiDigit(l.Value[0]))
+//                                       .OrderBy(X0)
+//                                       .ToList();
+//                        var nonDigits = hl.Except(digits).ToList();
+//                        var clusters = Cluster(nonDigits, 10);
+
+//                        if (digits.Count > 0 && clusters.Count >= 2)
+//                        {
+//                            plateDigits = string.Concat(digits.Select(d => d.Value));
+
+//                            var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
+//                            if (valueLetters.Count > 0)
+//                            {
+//                                // عدد glyphs هنا مش موثوق (الحروف مضغوطة)، فبنخليه 0
+//                                // عشان OCR ما يترفضش بسبب اختلاف عدد الحروف.
+//                                plateGlyphs = 0;
+//                                textPlateLetters ??= DecodePlateFromGlyphs(glyphs, valueLetters);
+
+//                                double minX = Math.Max(valueLetters.Min(X0) - 2, digits.Max(X1) + 1.5);
+//                                cells["plate"] = new CertCell(
+//                                    "plate", minX, valueLetters.Max(X1) + 12, topPdf, botPdf);
+//                            }
+//                        }
+//                    }
+//                }
+//                else if (key == "color")
+//                {
+//                    double minX = Math.Max(0, hl.Min(X0) - 15);
+//                    double maxX = hl.Max(X1) + 15;
+//                    cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
+//                    // الخلية فيها العنوان ("لون المركبة:") كمان، و ExtractBestColor بيشيله زي ما بيعمل مع الـ OCR.
+//                    AddTextField(textFields, glyphs, key, hl);
+//                }
+//                else
+//                {
+//                    var clusters = Cluster(hl, 10);
+//                    if (clusters.Count < 2) continue;
+
+//                    // clusters[0] هو العنوان (أقصى اليمين)، والباقي هو القيمة على شماله.
+//                    // بعض خطوط الشهادات بتخزّن قيمة الموديل كـ glyph واحد بعرض BBox صغير جداً،
+//                    // فلو اقتصّينا على valueLetters.Max(X1) بس بنقصّ جزء من الكلمة (مثلاً "اكسنت" → "مت").
+//                    // فبنمدّ الاقتصاص شمال العنوان بالكامل، مع ترك هامش صغير قبل العنوان.
+//                    var valueLetters = clusters.Skip(1).SelectMany(c => c).ToList();
+//                    double labelLeft = clusters[0].Min(X0);
+//                    double minX = valueLetters.Min(X0) - 5;
+//                    double maxX = Math.Max(valueLetters.Max(X1) + 5, labelLeft - 10);
+
+//                    // بعض الموديلات بتتكتب لاتيني/أرقام (مثلاً MG5) والـ OCR العربي
+//                    // بيقراها غلط. الـ text layer هنا سليم، فبنستخدمه مباشرة.
+//                    if (key == "model")
+//                    {
+//                        var ascii = string.Concat(valueLetters.OrderBy(X0).Select(l => l.Value)).Trim();
+//                        if (ascii.Length > 0 &&
+//                            ascii.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == ' ') &&
+//                            ascii.Any(char.IsAsciiLetter))
+//                            modelFromText = ascii;
+//                    }
+
+//                    cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
+//                    if (key != "model" || modelFromText == null)
+//                        AddTextField(textFields, glyphs, key, valueLetters);
+//                }
+//            }
+//        }
+
+//        return new CertLayout(W, H, certNo, vin, plateDigits, plateGlyphs, cells, englishPlateLetters, modelFromText,
+//                              textPlateLetters, textFields);
+//    }
+
+//    /// <summary>بيضيف الحقل لو اتفك بالكامل وفيه حرفين عربي على الأقل؛ غير كده الـ OCR بيقراه.</summary>
+//    private static void AddTextField(Dictionary<string, string> fields, EmbeddedGlyphDecoder glyphs, string key,
+//                                     IEnumerable<Letter> letters)
+//    {
+//        if (!glyphs.HasFonts) return;
+//        var text = glyphs.DecodeArabicText(letters);
+//        if (text != null && text.Count(ch => ch >= '\u0621' && ch <= '\u064A') >= 2)
+//            fields[key] = text;
+//    }
+
+//    /// <summary>
+//    /// بعض الشهادات بتفصل كلمات اسم المؤجر بالمسافات المكانية بس (مفيش حرف مسافة في الـ text layer)،
+//    /// فبتطلع "السعوديالفرنسي". قواعد ثابتة (نفس النتيجة على أي نظام):
+//    ///  • مسافة قبل "ال" لو الكلمة لحد هنا حرفين أو أكتر وبعد "ال" حرفين أو أكتر
+//    ///    (السعودي|الفرنسي، للتأجير|التمويلي؛ ومش بتلمس: جمال، خالد، الإجمالي، للتمويل، والتجارة).
+//    ///  • مسافة بعد ة / ى لو بعدها حرف (الكلمة العربية مابتكملش بعدهم).
+//    /// </summary>
+//    internal static string RestoreLessorWordSpaces(string text)
+//    {
+//        var sb = new StringBuilder(text.Length + 8);
+//        int wordLen = 0;
+//        for (int i = 0; i < text.Length; i++)
+//        {
+//            char ch = text[i];
+//            if (ch == ' ') { sb.Append(' '); wordLen = 0; continue; }
+
+//            if (wordLen >= 2 && ch == 'ا' && i + 1 < text.Length && text[i + 1] == 'ل')
+//            {
+//                int rest = 0;
+//                for (int j = i + 2; j < text.Length && text[j] != ' '; j++) rest++;
+//                if (rest >= 2) { sb.Append(' '); wordLen = 0; }
+//            }
+
+//            sb.Append(ch);
+//            wordLen++;
+//            if ((ch == 'ة' || ch == 'ى') && i + 1 < text.Length && text[i + 1] != ' ')
+//            {
+//                sb.Append(' ');
+//                wordLen = 0;
+//            }
+//        }
+//        return sb.ToString();
+//    }
+
+//    /// <summary>
+//    /// حروف اللوحة العربية من الخط المضمّن. بنقبلها بس لو كل glyph اتفك، وكل الحروف من أبجدية
+//    /// اللوحات السعودية، وعددها 1–3. غير كده null والـ OCR بيكمّل زي الأول.
+//    /// </summary>
+//    private static string? DecodePlateFromGlyphs(EmbeddedGlyphDecoder glyphs, List<Letter> valueLetters)
+//    {
+//        if (!glyphs.HasFonts || valueLetters.Count == 0) return null;
+//        var text = glyphs.DecodeArabicText(valueLetters)?.Replace(" ", "");
+//        if (string.IsNullOrEmpty(text)) return null;
+//        text = text.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
+//        if (text.Length > 3 || !text.All(ch => PlateAlphabet.Contains(ch))) return null;
+//        return text;
+//    }
+
+//    // ---------------------------------------------------------------------
+//    //  سجل: OCR
+//    // ---------------------------------------------------------------------
+//    private Decision RunOcr(
+//        TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
+//        string key, bool isPlate, int? mustLen, CancellationToken ct)
+//    {
+//        if (!lay.Cells.TryGetValue(key, out var c)) return Decision.Empty;
+
+//        var results = new List<(string Text, double Conf)>();
+//        var singleCharResults = new List<(string Text, double Conf)>();
+//        var psms = isPlate
+//            ? new[] { PageSegMode.SingleLine, PageSegMode.SingleBlock, PageSegMode.SparseText, PageSegMode.SingleWord, PageSegMode.RawLine }
+//            : new[] { PageSegMode.SingleLine, PageSegMode.SingleWord, PageSegMode.SparseText, PageSegMode.SingleChar };
+
+//        engine.SetVariable("tessedit_char_whitelist", isPlate ? PlateAlphabet : "");
+//        int total = 0;
+
+//        foreach (var pad in new[] { 3.0, 5.0 })
+//        {
+//            foreach (var scale in new[] { 2, 3 })
+//            {
+//                ct.ThrowIfCancellationRequested();
+
+//                // اللوحة العربية بتبقى ملاصقة لأرقامها، فأي هامش شمال بيدخّل جزء من
+//                // الرقم ويتقرأ كحرف زيادة (مثلاً 4 → ل). بنقلل الهامش الشمال للوحة فقط.
+//                double padLeft = isPlate ? 0 : pad;
+//                int l = (int)Math.Max(0, (c.X0 - padLeft) * sx);
+//                int r = (int)Math.Min(bmp.Width, (c.X1 + pad) * sx);
+//                int t = (int)Math.Max(0, (lay.PageH - c.TopPdf - pad) * sy);
+//                int b = (int)Math.Min(bmp.Height, (lay.PageH - c.BotPdf + pad) * sy);
+
+//                var png = MakeCrop(bmp, l, t, r, b, scale);
+//                using var pix = Pix.LoadFromMemory(png);
+
+//                foreach (var psm in psms)
+//                {
+//                    total++;
+//                    using var tp = engine.Process(pix, psm);
+//                    var text = Clean(tp.GetText(), isPlate, key == "model");
+//                    if (key == "lessor")
+//                        text = TrimLessorNoisePrefix(text);
+//                    double conf = tp.GetMeanConfidence();
+
+//                    if (text.Length > 0 && (mustLen == null || text.Length == mustLen))
+//                        results.Add((text, conf));
+
+//                    if (psm == PageSegMode.SingleChar && text.Length > 0)
+//                        singleCharResults.Add((text, conf));
+//                }
+//            }
+//        }
+
+//        var voted = Vote(results, total);
+
+//        // الموديل العربي الصغير أحياناً Tesseract بيقراه غلط على scale 2/3
+//        // (مثلاً "هنتر" → "اقنتر" أو "اتش2" → "انش2"). لو الثقة منخفضة،
+//        // بنعيد قراءته SingleChar على تكبير أعلى (6/8) ونستخدم النتيجة لو
+//        // التكبيرين اتفقوا على نفس النص.
+//        if (key == "model" && lay.ModelFromText == null &&
+//            (voted.Conf < 0.5 || voted.Votes < 2))
+//        {
+//            var extra = new List<(string Text, double Conf)>();
+//            int l = (int)Math.Max(0, (c.X0 - 3) * sx);
+//            int r = (int)Math.Min(bmp.Width, (c.X1 + 3) * sx);
+//            int t = (int)Math.Max(0, (lay.PageH - c.TopPdf - 3) * sy);
+//            int b = (int)Math.Min(bmp.Height, (lay.PageH - c.BotPdf + 3) * sy);
+//            foreach (var scale in new[] { 6, 8 })
+//            {
+//                ct.ThrowIfCancellationRequested();
+//                var png = MakeCrop(bmp, l, t, r, b, scale);
+//                using var pix = Pix.LoadFromMemory(png);
+//                using var tp = engine.Process(pix, PageSegMode.SingleChar);
+//                var text = Clean(tp.GetText(), false, true);
+//                if (text.Length >= 2)
+//                    extra.Add((text, tp.GetMeanConfidence()));
+//            }
+//            if (extra.Count > 0)
+//            {
+//                var extraVote = Vote(extra, extra.Count);
+//                bool normalKnown = CertificateLexicon.Models.Any(m => NormAr(m) == NormAr(voted.Text));
+//                bool extraKnown = CertificateLexicon.Models.Any(m => NormAr(m) == NormAr(extraVote.Text));
+
+//                // بعض خطوط سجل بترجّع confidence = 0 لنص صحيح، فاتفاق التكبيرين
+//                // (6 و 8) أقوى من رقم الثقة. نتراجع فقط لو القراءة العادية
+//                // مطابقة لقاموس والموديل الجديد مش مطابق.
+//                if (extraVote.Votes >= 2 && extraVote.Text.Length >= 2 &&
+//                    (extraKnown || !normalKnown))
+//                    return extraVote with { FromHighScale = true };
+//            }
+//        }
+
+//        // لو أصوات اللوحة منقسمة (مفيش نص أخد أكتر من نصف القراءات الصحيحة)،
+//        // فالغالب إن الحروف متباعدة و SparseText بيضيف/يبدّل حرف. في الحالة دي
+//        // بنجرّب التقسيم الفعلي للحروف ونستخدمه لو طلع واثق.
+//        int maxGroup = results.Count == 0 ? 0 : results.GroupBy(x => NormAr(x.Text)).Max(g => g.Count());
+//        bool splitVote = results.Count >= 2 && maxGroup * 2 <= results.Count;
+
+//        // لو اللوحة العربية متباعدة والحروف مش متصلة، Tesseract أحياناً بيقرا
+//        // الحرف الأول غلط أو بيضيف حرف. بنقسّم الخلية بالـ projection ونقرا
+//        // كل حرف لوحده، وبنستخدم النتيجة لو التقسيم مطابق.
+//        bool weakVote = voted.Text.Length != mustLen || voted.Votes < 2 || voted.Conf < 0.65;
+//        if (isPlate && mustLen.HasValue && (weakVote || splitVote))
+//        {
+//            var spaced = TryReadSpacedPlate(engine, bmp, sx, sy, lay, c, ct);
+//            // لو القراءة العادية طولها صح، ما نستبدلهاش بقراءة متفرقة بطول مختلف
+//            // (ممكن تكون دمجت حرفين أو قصّت حرف) إلا لو القراءة العادية نفسها ضعيفة.
+//            if (spaced != null &&
+//                (weakVote || (!spaced.Uncertain && spaced.Text.Length == voted.Text.Length)))
+//                return spaced;
+//        }
+
+//        // المصنع/الموديل في سجل بيطلعوا أحياناً كـ glyph واحد مضغوط.
+//        // في الحالة دي SingleLine بيقسّم الكلمة ويضيّع أول حرف، بينما SingleChar
+//        // بيقراها كلمة كاملة بثقة أعلى. نفضّل SingleChar لو نتيجته أوضح/أوثق.
+//        if (key is "make" or "model" && singleCharResults.Count > 0)
+//        {
+//            var single = Vote(singleCharResults, 4);
+//            if (single.Text.Length > 0 && single.Votes >= 2 && single.Conf >= 0.75 &&
+//                (single.Text.Length > voted.Text.Length || single.Conf > voted.Conf + 0.05))
+//            {
+//                return single;
+//            }
+//        }
+
+//        return voted;
+//    }
+
+//    private static byte[] MakeCrop(SKBitmap src, int l, int t, int r, int b, int scale)
+//    {
+//        const int border = 30;
+//        int w = Math.Max(1, r - l), h = Math.Max(1, b - t);
+//        using var dst = new SKBitmap(w * scale + 2 * border, h * scale + 2 * border);
+//        using var canvas = new SKCanvas(dst);
+//        canvas.Clear(SKColors.White);
+//        using var paint = new SKPaint { IsAntialias = true };
+//        canvas.DrawBitmap(src, new SKRect(l, t, r, b),
+//                          new SKRect(border, border, border + w * scale, border + h * scale), paint);
+//        using var img = SKImage.FromBitmap(dst);
+//        using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+//        return data.ToArray();
+//    }
+
+//    private static byte[] MakeSegmentCrop(SKBitmap src, int x0, int x1, int y0, int y1, int pad = 20)
+//    {
+//        int w = Math.Max(1, x1 - x0);
+//        int h = Math.Max(1, y1 - y0);
+//        using var dst = new SKBitmap(w + 2 * pad, h + 2 * pad);
+//        using var canvas = new SKCanvas(dst);
+//        canvas.Clear(SKColors.White);
+//        using var paint = new SKPaint { IsAntialias = true };
+//        canvas.DrawBitmap(src, new SKRect(x0, y0, x1, y1),
+//                          new SKRect(pad, pad, pad + w, pad + h), paint);
+//        using var img = SKImage.FromBitmap(dst);
+//        using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+//        return data.ToArray();
+//    }
+
+//    /// <summary>
+//    /// بعض اللوحات بتفصل الحروف بشرطات (ر-ل-م). Tesseract بيقرا الشرطة
+//    /// كحرف إضافي، فبنمسح المكوّنات الأفقية الرفيعة قبل تقسيم الحروف.
+//    /// </summary>
+//    private static void RemovePlateDashes(SKBitmap bmp)
+//    {
+//        int w = bmp.Width, h = bmp.Height;
+//        var seen = new bool[w * h];
+//        var stack = new Stack<int>();
+
+//        for (int y = 0; y < h; y++)
+//        {
+//            for (int x = 0; x < w; x++)
+//            {
+//                int start = y * w + x;
+//                if (seen[start]) continue;
+
+//                var px = bmp.GetPixel(x, y);
+//                if (!(px.Red < 140 && px.Green < 140 && px.Blue < 140))
+//                {
+//                    seen[start] = true;
+//                    continue;
+//                }
+
+//                var points = new List<int>();
+//                int minX = x, maxX = x, minY = y, maxY = y;
+//                seen[start] = true;
+//                stack.Push(start);
+
+//                while (stack.Count > 0)
+//                {
+//                    int cur = stack.Pop();
+//                    int cx = cur % w, cy = cur / w;
+//                    points.Add(cur);
+//                    minX = Math.Min(minX, cx); maxX = Math.Max(maxX, cx);
+//                    minY = Math.Min(minY, cy); maxY = Math.Max(maxY, cy);
+
+//                    if (cx > 0) TryPush(cur - 1);
+//                    if (cx + 1 < w) TryPush(cur + 1);
+//                    if (cy > 0) TryPush(cur - w);
+//                    if (cy + 1 < h) TryPush(cur + w);
+
+//                    void TryPush(int idx)
+//                    {
+//                        if (seen[idx]) return;
+//                        var p = bmp.GetPixel(idx % w, idx / w);
+//                        if (p.Red < 140 && p.Green < 140 && p.Blue < 140)
+//                        {
+//                            seen[idx] = true;
+//                            stack.Push(idx);
+//                        }
+//                        else
+//                        {
+//                            seen[idx] = true;
+//                        }
+//                    }
+//                }
+
+//                int cw = maxX - minX + 1, ch = maxY - minY + 1;
+//                bool dash = cw >= 18 && ch <= 22 && cw >= ch * 1.2;
+//                if (!dash) continue;
+
+//                foreach (int idx in points)
+//                    bmp.SetPixel(idx % w, idx / w, SKColors.White);
+//            }
+//        }
+//    }
+
+//    /// <summary>
+//    /// بعض خطوط سجل بترسم الحرف الواحد على شكلين (مثلاً س تطلع "لس"،
+//    /// ون تطلع "نا"، أو س تطلع "نس"). الـ ا/ل أو أي حرف زيادة قبل الحرف
+//    /// الحقيقي بتبقى أثر من رسم الحرف، فبنستبعد ا/ل وناخد آخر حرف متبقي.
+//    /// </summary>
+//    private static char PickSpacedLetter(string text)
+//    {
+//        var chars = text.Where(ch => ch != 'ا' && ch != 'ل').ToArray();
+//        return chars.Length > 0 ? chars[^1] : text[^1];
+//    }
+
+//    /// <summary>
+//    /// قراءة لوحة عربية متباعدة: تقسيم الخلية بالـ vertical projection ثم
+//    /// قراءة كل حرف لوحده. بترجع null لو التقسيم مش مطابق لعدد الحروف.
+//    /// </summary>
+//    private static Decision? TryReadSpacedPlate(
+//        TesseractEngine engine, SKBitmap bmp, double sx, double sy, CertLayout lay,
+//        CertCell c, CancellationToken ct)
+//    {
+//        ct.ThrowIfCancellationRequested();
+
+//        int l = (int)Math.Max(0, c.X0 * sx);
+//        int r = (int)Math.Min(bmp.Width, (c.X1 + 6) * sx);
+//        int t = (int)Math.Max(0, (lay.PageH - c.TopPdf - 4) * sy);
+//        int b = (int)Math.Min(bmp.Height, (lay.PageH - c.BotPdf + 4) * sy);
+//        if (r <= l || b <= t) return null;
+
+//        var lettersPng = MakeCrop(bmp, l, t, r, b, 6);
+//        using var letters = SKBitmap.Decode(lettersPng);
+//        if (letters == null) return null;
+//        RemovePlateDashes(letters);
+
+//        int w = letters.Width, h = letters.Height;
+//        var dark = new bool[w];
+//        for (int x = 0; x < w; x++)
+//        {
+//            for (int y = 0; y < h; y++)
+//            {
+//                var px = letters.GetPixel(x, y);
+//                if (px.Red < 140 && px.Green < 140 && px.Blue < 140)
+//                {
+//                    dark[x] = true;
+//                    break;
+//                }
+//            }
+//        }
+
+//        var runs = new List<(int A, int B)>();
+//        int? start = null;
+//        int last = -1;
+//        for (int x = 0; x < w; x++)
+//        {
+//            if (dark[x])
+//            {
+//                start ??= x;
+//                last = x;
+//            }
+//            else if (start.HasValue && x - last > 30)
+//            {
+//                runs.Add((start.Value, last));
+//                start = null;
+//            }
+//        }
+//        if (start.HasValue) runs.Add((start.Value, last));
+
+//        // تجاهل أي أثر رفيع في حافة الاقتصاص.
+//        runs = runs.Where(run => run.B - run.A >= 4 && run.B > 30).ToList();
+
+//        // عدد glyphs في الـ text layer مش موثوق في اللوحات المضغوطة (ممكن
+//        // حرفين glyph يمثلوا 3 حروف)، فبنعتمد على عدد المقاطع الفعلية.
+//        int expected = runs.Count;
+//        if (expected < 2 || expected > 5) return null;
+
+//        var sb = new StringBuilder();
+//        double confSum = 0;
+//        double certaintySum = 0;
+//        foreach (var run in runs.OrderByDescending(run => run.A))
+//        {
+//            int y0 = h, y1 = 0;
+//            for (int x = run.A; x <= run.B; x++)
+//            {
+//                for (int y = 0; y < h; y++)
+//                {
+//                    var px = letters.GetPixel(x, y);
+//                    if (px.Red < 140 && px.Green < 140 && px.Blue < 140)
+//                    {
+//                        y0 = Math.Min(y0, y);
+//                        y1 = Math.Max(y1, y);
+//                    }
+//                }
+//            }
+//            if (y1 <= y0) return null;
+
+//            var png = MakeSegmentCrop(letters,
+//                Math.Max(0, run.A - 20), Math.Min(w, run.B + 20),
+//                Math.Max(0, y0 - 12), Math.Min(h, y1 + 12));
+//            using var pix = Pix.LoadFromMemory(png);
+
+//            // بنجمع الحرف الناتج من كل PSM ونصوّت عليه. ده أدق من الاعتماد
+//            // على confidence الخام، لأن Tesseract بيدي 0.00 لحروف سليمة كتير.
+//            // SingleWord/RawLine أقوى في الحروف العربية المنفصلة من SingleChar
+//            // (اللي بتسقّط النقط وتحوّل ي→ب و ح→و)، فبنحسب لهم دعم قوي.
+//            var letterVotes = new Dictionary<char, (int Count, int StrongCount, int Repeated, double ConfSum)>();
+//            int candidateCount = 0;
+//            int strongCandidateCount = 0;
+//            foreach (var psm in new[] { PageSegMode.SingleChar, PageSegMode.SingleWord, PageSegMode.SingleLine, PageSegMode.SparseText, PageSegMode.RawLine })
+//            {
+//                using var tp = engine.Process(pix, psm);
+//                var candidate = Clean(tp.GetText(), true, false);
+//                double candidateConf = tp.GetMeanConfidence();
+//                if (candidate.Length == 0) continue;
+
+//                bool strong = psm is PageSegMode.SingleWord or PageSegMode.RawLine;
+//                char letter = PickSpacedLetter(candidate);
+//                letterVotes.TryGetValue(letter, out var vote);
+//                bool repeated = candidate.Length >= 2 && candidate.All(ch => ch == candidate[0]);
+//                letterVotes[letter] = (vote.Count + 1,
+//                                       vote.StrongCount + (strong ? 1 : 0),
+//                                       vote.Repeated + (repeated ? 1 : 0),
+//                                       vote.ConfSum + candidateConf);
+//                candidateCount++;
+//                if (strong) strongCandidateCount++;
+//            }
+//            if (candidateCount == 0)
+//            {
+//                // الحرف المقفول زي "ه" أحياناً Tesseract بيقراه 0/O، والـ
+//                // whitelist بيمنعه فيرجّع فاضي. بنعيد القراءة بدون whitelist
+//                // ونحوّل القراءة المقفولة لهاء.
+//                engine.SetVariable("tessedit_char_whitelist", "");
+//                string raw = "";
+//                double fallbackConf = 0;
+//                bool fallbackStrong = false;
+//                foreach (var psm in new[] { PageSegMode.SingleWord, PageSegMode.RawLine, PageSegMode.SingleChar, PageSegMode.SingleLine })
+//                {
+//                    using var tp = engine.Process(pix, psm);
+//                    var candidate = tp.GetText().Trim();
+//                    if (candidate.Length == 0) continue;
+//                    raw = candidate;
+//                    fallbackConf = tp.GetMeanConfidence();
+//                    fallbackStrong = psm is PageSegMode.SingleWord or PageSegMode.RawLine;
+//                    break;
+//                }
+//                engine.SetVariable("tessedit_char_whitelist", PlateAlphabet);
+
+//                char? fallbackLetter = null;
+//                var cleaned = Clean(raw, true, false).Replace('ة', 'ه');
+//                if (cleaned.Length > 0)
+//                    fallbackLetter = PickSpacedLetter(cleaned);
+//                else if (raw is "0" or "O" or "o")
+//                    fallbackLetter = 'ه';
+
+//                // لو المقطع شرطة رأسية طويلة ومفيش قراءة، دي ألف.
+//                int segW = run.B - run.A + 1;
+//                int segH = y1 - y0 + 1;
+//                if (!fallbackLetter.HasValue && segH >= segW * 2.2)
+//                {
+//                    fallbackLetter = 'ا';
+//                    fallbackStrong = true;
+//                    fallbackConf = Math.Max(fallbackConf, 0.6);
+//                }
+
+//                if (fallbackLetter.HasValue)
+//                {
+//                    letterVotes[fallbackLetter.Value] = (1, fallbackStrong ? 1 : 0, 0, fallbackConf);
+//                    candidateCount = 1;
+//                    strongCandidateCount = fallbackStrong ? 1 : 0;
+//                }
+//            }
+//            if (candidateCount == 0) return null;
+
+//            // الدعم القوي (SingleWord/RawLine) بيقدّم على الأصوات الضعيفة،
+//            // وبعدها الأصوات الأكتر، وبعدها الشكل المكرر.
+//            var best = letterVotes
+//                .OrderByDescending(kv => kv.Value.StrongCount)
+//                .ThenByDescending(kv => kv.Value.Count)
+//                .ThenByDescending(kv => kv.Value.Repeated)
+//                .ThenByDescending(kv => kv.Value.ConfSum / Math.Max(1, kv.Value.Count))
+//                .First();
+//            sb.Append(best.Key);
+//            confSum += best.Value.ConfSum / Math.Max(1, best.Value.Count);
+
+//            // الثقة = اتفاق قراءات SingleWord/RawLine. لو مفيش دعم قوي،
+//            // بنرجع لاتفاق كل الـ PSMs ونعتبره أقل تأكيداً.
+//            double agreement = strongCandidateCount > 0
+//                ? (double)best.Value.StrongCount / strongCandidateCount
+//                : candidateCount == 1 ? 0.6 : (double)best.Value.Count / candidateCount;
+//            certaintySum += agreement;
+//        }
+
+//        var result = sb.ToString();
+//        if (result.Length != expected) return null;
+
+//        // القراءة اتجمعت من تقسيم فعلي لكل حرف + تصويت بين PSMs. الغموض
+//        // الحقيقي هو اختلاف PSMs على حروف مختلفة، مش انخفاض confidence الخام.
+//        double avgConf = confSum / Math.Max(1, expected);
+//        double certainty = certaintySum / Math.Max(1, expected);
+//        return new Decision(result, 2, 2, avgConf, certainty < 0.75, true);
+//    }
+
+//    private static string Clean(string s, bool plate, bool keepModelChars = false)
+//    {
+//        var sb = new StringBuilder();
+//        foreach (var ch in s)
+//        {
+//            bool arabic = ch >= '\u0621' && ch <= '\u064A' && ch != '\u0640';
+//            bool modelExtra = keepModelChars &&
+//                              (char.IsAsciiDigit(ch) || char.IsAsciiLetter(ch) || ch == '-');
+
+//            if (arabic || modelExtra) sb.Append(ch);
+//            else if (!plate && char.IsWhiteSpace(ch)) sb.Append(' ');
+//        }
+//        var t = Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+//        // "اتش 2" → "اتش2": المسافة بين حرف عربي ورقم غالباً أثر OCR مش جزء من الموديل.
+//        if (keepModelChars && t.Any(char.IsAsciiDigit))
+//            t = Regex.Replace(t, @"(?<=\d)\s+|\s+(?=\d)", "");
+//        return plate ? t.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا') : t;
+//    }
+
+//    private static Decision Vote(List<(string Text, double Conf)> r, int total)
+//    {
+//        if (r.Count == 0) return new Decision("", 0, total, 0);
+
+//        // التصويت بيتعمل على النص المُطبّع (أ/إ/آ → ا، ى → ي، ة → ه)،
+//        // عشان اختلافات الهمزات ما تقسّمش الأصوات بين "ابيض" و"أبيض" وتخلّي نص غلط يكسب.
+//        var best = r.GroupBy(x => NormAr(x.Text))
+//                    .Select(g => new
+//                    {
+//                        Text = g.OrderByDescending(x => x.Conf).First().Text,
+//                        N = g.Count(),
+//                        // بعض أوضاع Tesseract بترجّع نفس النص الصح بثقة 0%؛
+//                        // المتوسط بيتحسب من القراءات اللي عندها ثقة موجبة بس.
+//                        C = g.Where(x => x.Conf > 0).Select(x => x.Conf).DefaultIfEmpty(0).Average()
+//                    })
+//                    .OrderByDescending(x => x.N).ThenByDescending(x => x.C).First();
+
+//        return new Decision(best.Text, best.N, total, best.C);
+//    }
+
+//    // =====================================================================
+//    //  Lexicon snapping (مشترك بين النوعين)
+//    // =====================================================================
+//    private static string NormAr(string s) =>
+//        s.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ى', 'ي').Replace('ة', 'ه');
+
+//    private static int Lev(string a, string b)
+//    {
+//        var d = new int[a.Length + 1, b.Length + 1];
+//        for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+//        for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+//        for (int i = 1; i <= a.Length; i++)
+//            for (int j = 1; j <= b.Length; j++)
+//                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+//                                   d[i - 1, j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+//        return d[a.Length, b.Length];
+//    }
+
+//    /// <summary>
+//    /// إصلاح اسم مصنع سقط منه آخر حرف (مثلاً "كي" بدل "كيا"). بنقبل الإصلاح
+//    /// فقط لو فيه مرشح واحد في القاموس بنفس النص + حرف واحد، عشان ما نبدّلش
+//    /// مصنع كامل باسم تاني.
+//    /// </summary>
+//    private static string? RepairTruncatedLexiconWord(string text, string[] lexicon)
+//    {
+//        string cleaned = StripHeaderPrefixes(text);
+//        string n = NormAr(cleaned);
+//        if (n.Length < 2) return null;
+
+//        string? match = null;
+//        foreach (var candidate in lexicon)
+//        {
+//            string normCandidate = NormAr(candidate);
+//            if (normCandidate.Length == n.Length + 1 &&
+//                normCandidate.StartsWith(n, StringComparison.Ordinal))
+//            {
+//                if (match != null) return null;   // أكتر من مرشح = مش آمن
+//                match = candidate;
+//            }
+//        }
+//        return match;
+//    }
+
+//    /// <summary>
+//    /// (1) احتواء كـ token مستقل (الأطول أولاً)  (2) Levenshtein على النص كله  (3) Levenshtein على كل كلمة.
+//    /// كل مرحلة بتحترم حدّها فقط (مفيش تسريب بين المراحل).
+//    /// </summary>
+//    private static (string Value, bool Snapped) Snap(string text, string[] lexicon)
+//    {
+//        if (string.IsNullOrWhiteSpace(text)) return (text, false);
+
+//        string cleaned = StripHeaderPrefixes(text);
+//        string n = NormAr(cleaned);
+//        var sorted = lexicon.OrderByDescending(c => c.Length).ToList();
+
+//        foreach (var cand in sorted)
+//        {
+//            if (Regex.IsMatch(n, $@"(^|\s){Regex.Escape(NormAr(cand))}(\s|$)"))
+//                return (cand, true);
+//        }
+
+//        string? best = null;
+//        int bestD = int.MaxValue;
+//        foreach (var cand in sorted)
+//        {
+//            var dd = Lev(n, NormAr(cand));
+//            if (dd < bestD) { bestD = dd; best = cand; }
+//        }
+//        int allowed = n.Length >= 8 ? 2 : n.Length >= 4 ? 1 : 0;
+//        if (best != null && bestD <= allowed) return (best, true);
+
+//        var words = n.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+//        string? tokenBest = null;
+//        int tokenBestD = int.MaxValue;
+//        foreach (var cand in sorted)
+//        {
+//            string normCand = NormAr(cand);
+//            int candAllowed = normCand.Length >= 5 ? 1 : 0;
+//            foreach (var w in words)
+//            {
+//                int d = Lev(w, normCand);
+//                if (d <= candAllowed && d < tokenBestD) { tokenBestD = d; tokenBest = cand; }
+//            }
+//        }
+//        if (tokenBest != null) return (tokenBest, true);
+
+//        return (cleaned, false);
+//    }
+
+//    private static (string Value, bool Snapped) ExtractBestColor(string ocrText, string[] lexicon)
+//    {
+//        if (string.IsNullOrWhiteSpace(ocrText)) return ("", false);
+
+//        string cleaned = NormAr(StripHeaderPrefixes(ocrText))
+//            .Replace("لون", "")
+//            .Replace("المركبه", "")
+//            .Replace("المركبة", "")
+//            .Replace("الأصل", "")
+//            .Replace("الاصل", "")
+//            .Replace(":", "")
+//            .Trim();
+
+//        var sortedLexicon = lexicon.OrderByDescending(c => c.Length).ToList();
+
+//        foreach (var color in sortedLexicon)
+//        {
+//            string normColor = NormAr(color);
+//            int idx = cleaned.IndexOf(normColor, StringComparison.Ordinal);
+//            if (idx < 0) continue;
+
+//            // لو التقطنا لون مع كلمة وصف إضافية زي "غامق" أو "فاتح"، رجّع النص الكامل
+//            // بدل ما نرجّع اللون الأساسي فقط ونقص المعلومة.
+//            string extra = cleaned.Remove(idx, normColor.Length).Trim();
+//            if (extra.Length > 0 && extra.Any(ch => ch >= '\u0621' && ch <= '\u064A'))
+//                return (cleaned, true);
+
+//            return (color, true);
+//        }
+
+//        string[] words = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+//        string? bestMatch = null;
+//        int lowestDistance = int.MaxValue;
+
+//        foreach (var color in sortedLexicon)
+//        {
+//            string normColor = NormAr(color);
+
+//            int distFull = Lev(cleaned, normColor);
+//            if (distFull < lowestDistance && distFull <= 2)
+//            {
+//                lowestDistance = distFull;
+//                bestMatch = color;
+//            }
+
+//            foreach (var word in words)
+//            {
+//                int distWord = Lev(word, normColor);
+//                if (distWord < lowestDistance && distWord <= (normColor.Length >= 4 ? 1 : 0))
+//                {
+//                    lowestDistance = distWord;
+//                    bestMatch = color;
+//                }
+//            }
+//        }
+
+//        return (bestMatch ?? cleaned, bestMatch != null);
+//    }
+
+//    // =====================================================================
+//    //  Types
+//    // =====================================================================
+//    private sealed record CertCell(string Name, double X0, double X1, double TopPdf, double BotPdf);
+
+//    private sealed record CertLayout(
+//        double PageW, double PageH, string? CertNo, string? Vin,
+//        string? PlateDigits, int PlateGlyphs,
+//        Dictionary<string, CertCell> Cells, string? EnglishPlateLetters = null,
+//        string? ModelFromText = null, string? TextPlateLetters = null,
+//        IReadOnlyDictionary<string, string>? TextFieldsOrNull = null)
+//    {
+//        /// <summary>حقول عربية اتفكّت من الخط المضمّن (make/model/color/lessor).</summary>
+//        public IReadOnlyDictionary<string, string> TextFields { get; } =
+//            TextFieldsOrNull ?? new Dictionary<string, string>();
+//    }
+
+//    private sealed record Decision(
+//        string Text, int Votes, int Total, double Conf,
+//        bool Uncertain = false, bool FromSpaced = false, bool FromHighScale = false)
+//    {
+//        public static Decision Empty => new("", 0, 8, 0);
+
+//        /// <summary>قيمة مقروءة من الـ text layer (مش OCR): ثقة كاملة.</summary>
+//        public static Decision FromText(string text) => new(text, 16, 16, 1.0);
+//    }
+
+//    /// <summary>Pool بسيط: كل محرك Tesseract بيتحمّل مرة واحدة ويتعاد استخدامه (ara.traineddata ~12MB).</summary>
+//    private sealed class TesseractEnginePool : IDisposable
+//    {
+//        private readonly string _tessDir;
+//        private readonly SemaphoreSlim _semaphore;
+//        private readonly ConcurrentBag<TesseractEngine> _idle = new();
+//        private readonly List<TesseractEngine> _all = new();
+//        private readonly object _gate = new();
+
+//        public TesseractEnginePool(string tessDir, int size)
+//        {
+//            _tessDir = tessDir;
+//            _semaphore = new SemaphoreSlim(size, size);
+//        }
+
+//        public async Task<Lease> AcquireAsync(CancellationToken ct)
+//        {
+//            await _semaphore.WaitAsync(ct);
+//            try
+//            {
+//                if (!_idle.TryTake(out var engine))
+//                {
+//                    if (!File.Exists(Path.Combine(_tessDir, "ara.traineddata")))
+//                        throw new InvalidOperationException(
+//                            $"ara.traineddata مش موجود في: {_tessDir} (مطلوب لشهادات سجل فقط. حمّله من tessdata_best وظبّط Certificates:TessdataPath).");
+
+//                    engine = new TesseractEngine(_tessDir, "ara", EngineMode.LstmOnly);
+//                    lock (_gate) _all.Add(engine);
+//                }
+//                return new Lease(this, engine);
+//            }
+//            catch
+//            {
+//                _semaphore.Release();
+//                throw;
+//            }
+//        }
+
+//        private void Release(TesseractEngine engine)
+//        {
+//            _idle.Add(engine);
+//            _semaphore.Release();
+//        }
+
+//        public void Dispose()
+//        {
+//            lock (_gate)
+//            {
+//                foreach (var e in _all) e.Dispose();
+//                _all.Clear();
+//            }
+//            _semaphore.Dispose();
+//        }
+
+//        public sealed class Lease : IDisposable
+//        {
+//            private readonly TesseractEnginePool _pool;
+//            private bool _released;
+//            public TesseractEngine Engine { get; }
+
+//            public Lease(TesseractEnginePool pool, TesseractEngine engine)
+//            {
+//                _pool = pool;
+//                Engine = engine;
+//            }
+
+//            public void Dispose()
+//            {
+//                if (_released) return;
+//                _released = true;
+//                _pool.Release(Engine);
+//            }
+//        }
+//    }
+//}
