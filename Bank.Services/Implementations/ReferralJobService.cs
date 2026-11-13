@@ -1267,15 +1267,21 @@ public class ReferralJobService : IReferralJobService
             var headerColor = XLColor.FromHtml("#" + GroupHeaderColors[groupIndex % GroupHeaderColors.Length]);
             groupIndex++;
 
-            // 1. هيدر اسم الملف في الخلية الأولى فقط (العمود A)
+            // 1. هيدر اسم الملف (دمج الخلية عبر عرض التقرير حتى لا يُوسع العمود A)
             var titleCell = sheet.Cell(row, 1);
             titleCell.Value = $"📁 {group.DataFileName}";
             titleCell.Style.Font.Bold = true;
             titleCell.Style.Font.FontSize = 11;
             titleCell.Style.Font.FontColor = XLColor.White;
             titleCell.Style.Fill.BackgroundColor = bannerColor;
-            titleCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            titleCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; // محاذاة لليمين أو الوسط
             titleCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+
+            if (totalCols > 1)
+            {
+                sheet.Range(row, 1, row, totalCols).Merge();
+            }
+
             sheet.Row(row).Height = 30;
             row++;
 
@@ -1375,25 +1381,9 @@ public class ReferralJobService : IReferralJobService
             targetColumn.Width = 35;
         }
 
-        sheet.Column(1).Width = Math.Max(sheet.Column(1).Width, 14);
+        // تحديد عرض العمود الأول بدقة ليكون رفيعاً ومناسباً للموبايل
+        sheet.Column(1).Width = 14;
         sheet.SheetView.FreezeColumns(1);
-    }
-    private static void WriteUnmatchedSheet(XLWorkbook workbook, string sheetName, List<(string RawPlate, string NormalizedPlate)> rows)
-    {
-        var sheet = workbook.Worksheets.Add(sheetName);
-        sheet.RightToLeft = true;
-
-        sheet.Cell(1, 1).Value = "اللوحة كما أُدخلت";
-        sheet.Cell(1, 2).Value = "اللوحة بعد التطبيع";
-
-        var r = 2;
-        foreach (var row in rows)
-        {
-            sheet.Cell(r, 1).Value = row.RawPlate;
-            sheet.Cell(r, 2).Value = row.NormalizedPlate;
-            r++;
-        }
-        sheet.Columns().AdjustToContents();
     }
 
     private static string? ValidateUploadedFile(Microsoft.AspNetCore.Http.IFormFile? file)
