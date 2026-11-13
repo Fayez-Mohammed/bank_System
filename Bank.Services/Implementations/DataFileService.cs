@@ -350,9 +350,8 @@ public class DataFileService : IDataFileService
 
         return ApiResponse<bool>.SuccessResponse(true, "جاري حذف الملف والبيانات المرتبطة به في الخلفية.");
     }
-
     public async Task<(Stream Stream, string ContentType, string FileName)> DownloadAsync(
-        Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
+    Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
         var dataFile = await _dbContext.DataFiles
             .AsNoTracking()
@@ -369,7 +368,6 @@ public class DataFileService : IDataFileService
             throw new UnauthorizedAccessException(NoDataFilePermissionMessage);
         }
 
-        // الاستيراد لسه شغال أو فشل: الـ DB ناقصة. مفيش رجوع للملف الأصلي، المستخدم بياخد رسالة واضحة.
         if (dataFile.ImportStatus != DataFileImportStatus.Completed)
         {
             _logger.LogWarning("Download rejected for DataFile {DataFileId}: import status {Status}",
@@ -379,13 +377,27 @@ public class DataFileService : IDataFileService
                 : "الملف لسه بيتم استيراده. جرّب تاني بعد ما يخلص.");
         }
 
-        var rows = _dbContext.HistoricalPlates
+        // 1. تحديد أول ظهور لكل حي (باستثناء الأحياء الفارغة)
+        var districtOrder = await _dbContext.HistoricalPlates
+            .AsNoTracking()
+            .Where(p => p.DataFileId == dataFileId && p.District != null && p.District.Trim() != "")
+            .GroupBy(p => p.District!.Trim())
+            .Select(g => new { District = g.Key, MinId = g.Min(x => x.Id) })
+            .ToDictionaryAsync(x => x.District, x => x.MinId, cancellationToken);
+
+        // 2. جلب كافة الصفوف لترتيبها في الذاكرة
+        var fetchedRows = await _dbContext.HistoricalPlates
             .AsNoTracking()
             .Where(p => p.DataFileId == dataFileId)
-            .OrderBy(p => p.Id)
+            .ToListAsync(cancellationToken);
+
+        // 3. الترتيب: الأحياء المعروفة أولاً حسب أول ظهور -> الصفوف بدون حي في الأخير -> الترتيب بـ Id
+        var rows = fetchedRows
+            .OrderBy(p => !string.IsNullOrWhiteSpace(p.District) && districtOrder.TryGetValue(p.District.Trim(), out var minId) ? minId : long.MaxValue)
+            .ThenBy(p => p.Id)
             .Select(p => new DataFilePlateRow(
                 p.RawPlate, p.Notes, p.VehicleType, p.Street, p.District, p.Location, p.RecordedAt, p.RecorderName))
-            .AsAsyncEnumerable();
+            .ToAsyncEnumerable();
 
         var stream = await DataFileExcelExporter.WriteAsync(rows, cancellationToken);
         _logger.LogInformation("DataFile {DataFileId} exported from database (stored RowCount {RowCount})",
@@ -393,6 +405,48 @@ public class DataFileService : IDataFileService
 
         return (stream, DataFileExcelExporter.ContentType, DataFileExcelExporter.ToExportFileName(dataFile.FileName));
     }
+    //public async Task<(Stream Stream, string ContentType, string FileName)> DownloadAsync(
+    //    Guid dataFileId, Guid currentUserId, CancellationToken cancellationToken = default)
+    //{
+    //    var dataFile = await _dbContext.DataFiles
+    //        .AsNoTracking()
+    //        .FirstOrDefaultAsync(f => f.Id == dataFileId, cancellationToken);
+
+    //    if (dataFile is null)
+    //    {
+    //        _logger.LogWarning("Download attempted on missing DataFile {DataFileId}", dataFileId);
+    //        throw new KeyNotFoundException("الملف غير موجود.");
+    //    }
+
+    //    if (!await _permissions.CanManageDataFileAsync(currentUserId, dataFileId, cancellationToken))
+    //    {
+    //        throw new UnauthorizedAccessException(NoDataFilePermissionMessage);
+    //    }
+
+    //    // الاستيراد لسه شغال أو فشل: الـ DB ناقصة. مفيش رجوع للملف الأصلي، المستخدم بياخد رسالة واضحة.
+    //    if (dataFile.ImportStatus != DataFileImportStatus.Completed)
+    //    {
+    //        _logger.LogWarning("Download rejected for DataFile {DataFileId}: import status {Status}",
+    //            dataFileId, dataFile.ImportStatus);
+    //        throw new DataFileExportException(dataFile.ImportStatus == DataFileImportStatus.Failed
+    //            ? "استيراد الملف فشل، فمينفعش يتحمّل."
+    //            : "الملف لسه بيتم استيراده. جرّب تاني بعد ما يخلص.");
+    //    }
+
+    //    var rows = _dbContext.HistoricalPlates
+    //        .AsNoTracking()
+    //        .Where(p => p.DataFileId == dataFileId)
+    //        .OrderBy(p => p.Id)
+    //        .Select(p => new DataFilePlateRow(
+    //            p.RawPlate, p.Notes, p.VehicleType, p.Street, p.District, p.Location, p.RecordedAt, p.RecorderName))
+    //        .AsAsyncEnumerable();
+
+    //    var stream = await DataFileExcelExporter.WriteAsync(rows, cancellationToken);
+    //    _logger.LogInformation("DataFile {DataFileId} exported from database (stored RowCount {RowCount})",
+    //        dataFileId, dataFile.RowCount);
+
+    //    return (stream, DataFileExcelExporter.ContentType, DataFileExcelExporter.ToExportFileName(dataFile.FileName));
+    //}
 
     public async Task<ApiResponse<UpdateHistoricalPlateResponseDto>> UpdateHistoricalPlateAsync(
         long historicalPlateId, Guid currentUserId, UpdateHistoricalPlateDto dto, CancellationToken cancellationToken = default)

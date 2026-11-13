@@ -225,31 +225,71 @@ public class ReferralJobService : IReferralJobService
             .Select((g, idx) => new { g.Key, Color = idx % ReferralColorPalette.Colors.Count })
             .ToDictionary(x => x.Key, x => x.Color);
 
+        //var groups = rows
+        //    .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
+        //    .OrderBy(g => g.Key.SortOrder)
+        //    .Select(g => new ReferralResultGroupDto(
+        //        g.Key.SourceDataFileId,
+        //        g.Key.SourceFileName,
+        //        g.Key.SortOrder,
+        //        g.OrderBy(r => r.HistoricalPlateId).Select(r =>
+        //        {
+        //            var dataCols = BuildDataColumns(
+        //                selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
+        //                r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
+
+        //            extraByJobAndPlate.TryGetValue($"{r.ReferralJobId}|{r.NormalizedPlate}", out var extraJson);
+        //            var referralCols = BuildReferralColumns(selectedReferral, extraJson);
+
+        //            var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+
+        //            return new ReferralResultRowDto(
+        //                r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
+        //                hasColor ? colorIdx : null,
+        //                dataCols, referralCols);
+        //        }).ToList()))
+        //    .ToList();
         var groups = rows
-            .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
-            .OrderBy(g => g.Key.SortOrder)
-            .Select(g => new ReferralResultGroupDto(
-                g.Key.SourceDataFileId,
-                g.Key.SourceFileName,
-                g.Key.SortOrder,
-                g.OrderBy(r => r.HistoricalPlateId).Select(r =>
-                {
-                    var dataCols = BuildDataColumns(
-                        selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
-                        r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
+    .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
+    .OrderBy(g => g.Key.SortOrder)
+    .Select(g =>
+    {
+        // 1. تحديد أول ظهور لكل حي داخل ملف الداتا المحدد (أقل HistoricalPlateId للحي)
+        var districtOrder = g
+            .Where(r => !string.IsNullOrWhiteSpace(r.FoundDistrict))
+            .GroupBy(r => r.FoundDistrict!.Trim())
+            .ToDictionary(dg => dg.Key, dg => dg.Min(r => r.HistoricalPlateId));
 
-                    extraByJobAndPlate.TryGetValue($"{r.ReferralJobId}|{r.NormalizedPlate}", out var extraJson);
-                    var referralCols = BuildReferralColumns(selectedReferral, extraJson);
+        // 2. ترتيب صفوف المجموعة بحسب أولوية الحي ثم بحسب الـ HistoricalPlateId
+        var orderedRows = g
+            .OrderBy(r => !string.IsNullOrWhiteSpace(r.FoundDistrict) && districtOrder.TryGetValue(r.FoundDistrict.Trim(), out var minId)
+                ? minId
+                : long.MaxValue)
+            .ThenBy(r => r.HistoricalPlateId);
 
-                    var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+        return new ReferralResultGroupDto(
+            g.Key.SourceDataFileId,
+            g.Key.SourceFileName,
+            g.Key.SortOrder,
+            orderedRows.Select(r =>
+            {
+                var dataCols = BuildDataColumns(
+                    selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
+                    r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
 
-                    return new ReferralResultRowDto(
-                        r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
-                        hasColor ? colorIdx : null,
-                        dataCols, referralCols);
-                }).ToList()))
-            .ToList();
+                // الحفاظ على تركيب المفتاح الخاص بالتطابق المدمج
+                extraByJobAndPlate.TryGetValue($"{r.ReferralJobId}|{r.NormalizedPlate}", out var extraJson);
+                var referralCols = BuildReferralColumns(selectedReferral, extraJson);
 
+                var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+
+                return new ReferralResultRowDto(
+                    r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
+                    hasColor ? colorIdx : null,
+                    dataCols, referralCols);
+            }).ToList());
+    })
+    .ToList();
         return new ReferralResultsResponseDto(
             selectedHistorical.Select(c => c.ToString()).ToList(),
             selectedReferral,
@@ -916,31 +956,70 @@ public class ReferralJobService : IReferralJobService
             .Select((g, idx) => new { g.Key, Color = idx % ReferralColorPalette.Colors.Count })
             .ToDictionary(x => x.Key, x => x.Color);
 
+        //var groups = rows
+        //    .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
+        //    .OrderBy(g => g.Key.SortOrder)
+        //    .Select(g => new ReferralResultGroupDto(
+        //        g.Key.SourceDataFileId,
+        //        g.Key.SourceFileName,
+        //        g.Key.SortOrder,
+        //        g.OrderBy(r => r.HistoricalPlateId).Select(r =>
+        //        {
+        //            var dataCols = BuildDataColumns(
+        //                selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
+        //                r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
+
+        //            extraByPlate.TryGetValue(r.NormalizedPlate, out var extraJson);
+        //            var referralCols = BuildReferralColumns(selectedReferral, extraJson);
+
+        //            var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+
+        //            return new ReferralResultRowDto(
+        //                r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
+        //                hasColor ? colorIdx : null,
+        //                dataCols, referralCols);
+        //        }).ToList()))
+        //    .ToList();
         var groups = rows
-            .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
-            .OrderBy(g => g.Key.SortOrder)
-            .Select(g => new ReferralResultGroupDto(
-                g.Key.SourceDataFileId,
-                g.Key.SourceFileName,
-                g.Key.SortOrder,
-                g.OrderBy(r => r.HistoricalPlateId).Select(r =>
-                {
-                    var dataCols = BuildDataColumns(
-                        selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
-                        r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
+    .GroupBy(r => new { r.SourceDataFileId, r.SourceFileName, r.SortOrder })
+    .OrderBy(g => g.Key.SortOrder)
+    .Select(g =>
+    {
+        // 1. تحديد أول ظهور لكل حي داخل ملف الداتا ده (أقل HistoricalPlateId للحي)
+        var districtOrder = g
+            .Where(r => !string.IsNullOrWhiteSpace(r.FoundDistrict))
+            .GroupBy(r => r.FoundDistrict!.Trim())
+            .ToDictionary(dg => dg.Key, dg => dg.Min(r => r.HistoricalPlateId));
 
-                    extraByPlate.TryGetValue(r.NormalizedPlate, out var extraJson);
-                    var referralCols = BuildReferralColumns(selectedReferral, extraJson);
+        // 2. ترتيب صفوف المجموعة حسب الحي ثم حسب الـ HistoricalPlateId
+        var orderedRows = g
+            .OrderBy(r => !string.IsNullOrWhiteSpace(r.FoundDistrict) && districtOrder.TryGetValue(r.FoundDistrict.Trim(), out var minId)
+                ? minId
+                : long.MaxValue)
+            .ThenBy(r => r.HistoricalPlateId);
 
-                    var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+        return new ReferralResultGroupDto(
+            g.Key.SourceDataFileId,
+            g.Key.SourceFileName,
+            g.Key.SortOrder,
+            orderedRows.Select(r =>
+            {
+                var dataCols = BuildDataColumns(
+                    selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
+                    r.Location, r.FoundRecordedAt, r.Notes, r.RecorderName);
 
-                    return new ReferralResultRowDto(
-                        r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
-                        hasColor ? colorIdx : null,
-                        dataCols, referralCols);
-                }).ToList()))
-            .ToList();
+                extraByPlate.TryGetValue(r.NormalizedPlate, out var extraJson);
+                var referralCols = BuildReferralColumns(selectedReferral, extraJson);
 
+                var hasColor = colorByPlate.TryGetValue(r.NormalizedPlate, out var colorIdx);
+
+                return new ReferralResultRowDto(
+                    r.Id, r.HistoricalPlateId, r.NormalizedPlate, r.RawPlate,
+                    hasColor ? colorIdx : null,
+                    dataCols, referralCols);
+            }).ToList());
+    })
+    .ToList();
         return new ReferralResultsResponseDto(
             selectedHistorical.Select(c => c.ToString()).ToList(),
             selectedReferral,
