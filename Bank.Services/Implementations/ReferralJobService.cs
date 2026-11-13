@@ -232,7 +232,7 @@ public class ReferralJobService : IReferralJobService
                 g.Key.SourceDataFileId,
                 g.Key.SourceFileName,
                 g.Key.SortOrder,
-                g.OrderBy(r => r.NormalizedPlate).Select(r =>
+                g.OrderBy(r => r.HistoricalPlateId).Select(r =>
                 {
                     var dataCols = BuildDataColumns(
                         selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
@@ -923,7 +923,7 @@ public class ReferralJobService : IReferralJobService
                 g.Key.SourceDataFileId,
                 g.Key.SourceFileName,
                 g.Key.SortOrder,
-                g.OrderBy(r => r.NormalizedPlate).Select(r =>
+                g.OrderBy(r => r.HistoricalPlateId).Select(r =>
                 {
                     var dataCols = BuildDataColumns(
                         selectedHistorical, r.FoundVehicleType, r.FoundDistrict, r.FoundStreet,
@@ -1025,15 +1025,159 @@ public class ReferralJobService : IReferralJobService
 
     private static readonly string[] GroupBannerColors = { "2F5496", "C55A11", "548235", "7030A0", "BF8F00", "1F4E78" };
     private static readonly string[] GroupHeaderColors = { "1F3864", "833C00", "375623", "4C1F6D", "806000", "0F2A44" };
+    //private static void WriteMatchedSheet(XLWorkbook workbook, string sheetName, ReferralResultsResponseDto data)
+    //{
+    //    var sheet = workbook.Worksheets.Add(sheetName);
+    //    sheet.RightToLeft = true;
+
+    //    var historicalHeaders = data.SelectedHistoricalColumns.Select(HistoricalColumnLabel).ToList();
+    //    var referralHeaders = data.SelectedReferralColumns;
+    //    var totalCols = 1 + historicalHeaders.Count + referralHeaders.Count;
+    //    var locationColIndex = data.SelectedHistoricalColumns.IndexOf(nameof(HistoricalDataColumn.Location));
+
+    //    var row = 1;
+    //    var groupIndex = 0;
+
+    //    foreach (var group in data.Groups)
+    //    {
+    //        var bannerColor = XLColor.FromHtml("#" + GroupBannerColors[groupIndex % GroupBannerColors.Length]);
+    //        var headerColor = XLColor.FromHtml("#" + GroupHeaderColors[groupIndex % GroupHeaderColors.Length]);
+    //        groupIndex++;
+
+    //        var titleCell = sheet.Cell(row, 1);
+    //        titleCell.Value = $"📁 {group.DataFileName}";
+    //        titleCell.Style.Font.Bold = true;
+    //        titleCell.Style.Font.FontSize = 13;
+    //        titleCell.Style.Font.FontColor = XLColor.White;
+    //        titleCell.Style.Fill.BackgroundColor = bannerColor;
+    //        titleCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    //        titleCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+    //        if (totalCols > 1) sheet.Range(row, 1, row, totalCols).Merge();
+    //        sheet.Row(row).Height = 24;
+    //        row++;
+
+    //        var headerRow = row;
+    //        sheet.Cell(headerRow, 1).Value = "رقم اللوحة";
+    //        var headerCol = 2;
+    //        foreach (var h in historicalHeaders) sheet.Cell(headerRow, headerCol++).Value = h;
+    //        foreach (var h in referralHeaders) sheet.Cell(headerRow, headerCol++).Value = h;
+
+    //        var headerRange = sheet.Range(headerRow, 1, headerRow, totalCols);
+    //        headerRange.Style.Font.Bold = true;
+    //        headerRange.Style.Font.FontColor = XLColor.White;
+    //        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + GroupHeaderColors[groupIndex % GroupHeaderColors.Length]); headerRange.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    //        headerRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+    //        headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+    //        headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+    //        sheet.Row(headerRow).Height = 20;
+    //        row++;
+
+    //        var firstDataRow = row;
+
+    //        foreach (var r in group.Rows)
+    //        {
+    //            var plateCell = sheet.Cell(row, 1);
+    //            plateCell.Value = r.NormalizedPlate;
+    //            plateCell.Style.Font.Bold = true;
+    //            plateCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    //            plateCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+    //            if (r.ColorIndex.HasValue)
+    //            {
+    //                plateCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + ReferralColorPalette.Colors[r.ColorIndex.Value]);
+    //            }
+
+    //            var col = 2;
+    //            foreach (var key in data.SelectedHistoricalColumns)
+    //            {
+    //                var cell = sheet.Cell(row, col);
+    //                var value = r.DataColumns.TryGetValue(key, out var v) ? v : null;
+    //                cell.Value = value;
+    //                cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+
+    //                if (key == nameof(HistoricalDataColumn.Location) && !string.IsNullOrWhiteSpace(value)
+    //                    && Uri.TryCreate(value, UriKind.Absolute, out var uri))
+    //                {
+    //                    cell.Value = value;
+    //                    cell.SetHyperlink(new XLHyperlink(uri.AbsoluteUri));
+    //                    cell.Style.Font.FontColor = XLColor.FromHtml("#0563C1");
+    //                    cell.Style.Font.Underline = XLFontUnderlineValues.Single;
+    //                    cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    //                    cell.Style.Alignment.WrapText = true;
+    //                }
+    //                else if (key == nameof(HistoricalDataColumn.Location))
+    //                {
+    //                    cell.Value = value;
+    //                    cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+    //                    // 💡 إضافة التغليف هنا أيضاً في حال لم يكن الرابط صالحاً
+    //                    cell.Style.Alignment.WrapText = true;
+    //                }
+    //                if (r.ColorIndex.HasValue)
+    //                {
+    //                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + ReferralColorPalette.Colors[r.ColorIndex.Value]);
+    //                }
+    //                col++;
+    //            }
+
+    //            foreach (var key in referralHeaders)
+    //            {
+    //                var cell = sheet.Cell(row, col);
+    //                cell.Value = r.ReferralColumns.TryGetValue(key, out var v) ? v : null;
+    //                cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + ReferralColorPalette.ReferralColumnBackground);
+    //                cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+    //                col++;
+    //            }
+    //            row++;
+    //        }
+
+    //        if (row > firstDataRow)
+    //        {
+    //            var dataRange = sheet.Range(firstDataRow, 1, row - 1, totalCols);
+    //            dataRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+    //            dataRange.Style.Border.InsideBorder = XLBorderStyleValues.Hair;
+    //        }
+
+    //        row++; 
+    //    }
+
+    //    sheet.Columns().AdjustToContents();
+
+    //    if (locationColIndex >= 0)
+    //    {
+    //        var targetColumn = sheet.Column(2 + locationColIndex);
+    //        targetColumn.Width = 35;
+    //        // sheet.Column(2 + locationColIndex).Width = 14;
+    //    }
+
+    //    sheet.Column(1).Width = Math.Max(sheet.Column(1).Width, 14);
+    //    sheet.SheetView.FreezeColumns(1); 
+    //}
+    private static int GetHistoricalColumnOrder(string colName) => colName switch
+    {
+        nameof(HistoricalDataColumn.Notes) => 1,
+        nameof(HistoricalDataColumn.VehicleType) => 2,
+        nameof(HistoricalDataColumn.Street) => 3,       // الشارع أولاً
+        nameof(HistoricalDataColumn.District) => 4,     // الحي ثانياً
+        nameof(HistoricalDataColumn.Location) => 5,     // GPS ثالثاً
+        nameof(HistoricalDataColumn.RecordedAt) => 6,
+        nameof(HistoricalDataColumn.RecorderName) => 7,
+        _ => 99
+    };
+
     private static void WriteMatchedSheet(XLWorkbook workbook, string sheetName, ReferralResultsResponseDto data)
     {
         var sheet = workbook.Worksheets.Add(sheetName);
         sheet.RightToLeft = true;
 
-        var historicalHeaders = data.SelectedHistoricalColumns.Select(HistoricalColumnLabel).ToList();
+        // إعادة ترتيب الأعمدة لضمان ظهور الشارع والحي قبل الـ GPS
+        var orderedHistoricalColumns = data.SelectedHistoricalColumns
+            .OrderBy(GetHistoricalColumnOrder)
+            .ToList();
+
+        var historicalHeaders = orderedHistoricalColumns.Select(HistoricalColumnLabel).ToList();
         var referralHeaders = data.SelectedReferralColumns;
         var totalCols = 1 + historicalHeaders.Count + referralHeaders.Count;
-        var locationColIndex = data.SelectedHistoricalColumns.IndexOf(nameof(HistoricalDataColumn.Location));
+        var locationColIndex = orderedHistoricalColumns.IndexOf(nameof(HistoricalDataColumn.Location));
 
         var row = 1;
         var groupIndex = 0;
@@ -1044,18 +1188,19 @@ public class ReferralJobService : IReferralJobService
             var headerColor = XLColor.FromHtml("#" + GroupHeaderColors[groupIndex % GroupHeaderColors.Length]);
             groupIndex++;
 
+            // 1. هيدر اسم الملف في الخلية الأولى فقط (العمود A)
             var titleCell = sheet.Cell(row, 1);
             titleCell.Value = $"📁 {group.DataFileName}";
             titleCell.Style.Font.Bold = true;
-            titleCell.Style.Font.FontSize = 13;
+            titleCell.Style.Font.FontSize = 11;
             titleCell.Style.Font.FontColor = XLColor.White;
             titleCell.Style.Fill.BackgroundColor = bannerColor;
             titleCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             titleCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
-            if (totalCols > 1) sheet.Range(row, 1, row, totalCols).Merge();
-            sheet.Row(row).Height = 24;
+            sheet.Row(row).Height = 30;
             row++;
 
+            // 2. هيدر أسماء الأعمدة
             var headerRow = row;
             sheet.Cell(headerRow, 1).Value = "رقم اللوحة";
             var headerCol = 2;
@@ -1065,17 +1210,21 @@ public class ReferralJobService : IReferralJobService
             var headerRange = sheet.Range(headerRow, 1, headerRow, totalCols);
             headerRange.Style.Font.Bold = true;
             headerRange.Style.Font.FontColor = XLColor.White;
-            headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + GroupHeaderColors[groupIndex % GroupHeaderColors.Length]); headerRange.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            headerRange.Style.Fill.BackgroundColor = headerColor;
+            headerRange.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             headerRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
             headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
             headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
-            sheet.Row(headerRow).Height = 20;
+            sheet.Row(headerRow).Height = 30;
             row++;
 
             var firstDataRow = row;
 
+            // 3. صفوف البيانات مع زيادة الارتفاع
             foreach (var r in group.Rows)
             {
+                sheet.Row(row).Height = 35; // ارتفاع الصفوف
+
                 var plateCell = sheet.Cell(row, 1);
                 plateCell.Value = r.NormalizedPlate;
                 plateCell.Style.Font.Bold = true;
@@ -1087,7 +1236,7 @@ public class ReferralJobService : IReferralJobService
                 }
 
                 var col = 2;
-                foreach (var key in data.SelectedHistoricalColumns)
+                foreach (var key in orderedHistoricalColumns)
                 {
                     var cell = sheet.Cell(row, col);
                     var value = r.DataColumns.TryGetValue(key, out var v) ? v : null;
@@ -1108,10 +1257,9 @@ public class ReferralJobService : IReferralJobService
                     {
                         cell.Value = value;
                         cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-
-                        // 💡 إضافة التغليف هنا أيضاً في حال لم يكن الرابط صالحاً
                         cell.Style.Alignment.WrapText = true;
                     }
+
                     if (r.ColorIndex.HasValue)
                     {
                         cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#" + ReferralColorPalette.Colors[r.ColorIndex.Value]);
@@ -1137,7 +1285,7 @@ public class ReferralJobService : IReferralJobService
                 dataRange.Style.Border.InsideBorder = XLBorderStyleValues.Hair;
             }
 
-            row++; 
+            row++;
         }
 
         sheet.Columns().AdjustToContents();
@@ -1146,13 +1294,11 @@ public class ReferralJobService : IReferralJobService
         {
             var targetColumn = sheet.Column(2 + locationColIndex);
             targetColumn.Width = 35;
-            // sheet.Column(2 + locationColIndex).Width = 14;
         }
 
         sheet.Column(1).Width = Math.Max(sheet.Column(1).Width, 14);
-        sheet.SheetView.FreezeColumns(1); 
+        sheet.SheetView.FreezeColumns(1);
     }
-
     private static void WriteUnmatchedSheet(XLWorkbook workbook, string sheetName, List<(string RawPlate, string NormalizedPlate)> rows)
     {
         var sheet = workbook.Worksheets.Add(sheetName);
