@@ -1385,6 +1385,23 @@ public class ReferralJobService : IReferralJobService
         sheet.Column(1).Width = 14;
         sheet.SheetView.FreezeColumns(1);
     }
+    private static void WriteUnmatchedSheet(XLWorkbook workbook, string sheetName, List<(string RawPlate, string NormalizedPlate)> rows)
+    {
+        var sheet = workbook.Worksheets.Add(sheetName);
+        sheet.RightToLeft = true;
+
+        sheet.Cell(1, 1).Value = "اللوحة كما أُدخلت";
+        sheet.Cell(1, 2).Value = "اللوحة بعد التطبيع";
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            sheet.Cell(r, 1).Value = row.RawPlate;
+            sheet.Cell(r, 2).Value = row.NormalizedPlate;
+            r++;
+        }
+        sheet.Columns().AdjustToContents();
+    }
 
     private static string? ValidateUploadedFile(Microsoft.AspNetCore.Http.IFormFile? file)
     {
