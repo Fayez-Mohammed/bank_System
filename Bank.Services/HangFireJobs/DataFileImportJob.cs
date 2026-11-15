@@ -247,7 +247,7 @@ public class DataFileImportJob
         _logger.LogInformation("Delete job completed for DataFile {DataFileId}", dataFileId);
     }
 
-    private static async Task<int> DeleteHistoricalPlatesAsync(
+    internal static async Task<int> DeleteHistoricalPlatesAsync(
         NpgsqlConnection connection, Guid dataFileId, CancellationToken cancellationToken)
     {
         // match_results بيشاور على historical_plates بـ Restrict، فلازم نمسح كل

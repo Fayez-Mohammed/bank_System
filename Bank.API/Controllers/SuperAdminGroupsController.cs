@@ -111,4 +111,17 @@ public class SuperAdminGroupsController : ControllerBase
         var result = await _superAdminService.SetGroupDataRowLimitAsync(id, dto, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+
+    /// <summary>
+    /// Deletes a group that has no members. Its files stay and become personal files of their owners.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteGroup(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _superAdminService.DeleteGroupAsync(id, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 }

@@ -82,6 +82,7 @@ namespace Bank
             builder.Services.AddScoped<IDeviceTokenService, DeviceTokenService>();
             builder.Services.AddScoped<SubscriptionExpiryJob>();
             builder.Services.AddScoped<CertificateNotificationJob>();
+            builder.Services.AddScoped<UserDeletionJob>();
             //
 
             builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>

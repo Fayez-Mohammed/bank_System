@@ -2,6 +2,7 @@
 using Bank.DAL.Models.BaseModels;
 using Bank.DAL.Models.SystemModels;
 using Bank.Repo.Interfaces;
+using Bank.Services.HangFireJobs;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AdminDTOs;
@@ -10,6 +11,7 @@ using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.Enums;
 using DocumentFormat.OpenXml.Spreadsheet;
 using Google.Apis.Drive.v3.Data;
+using Hangfire;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -30,19 +32,22 @@ namespace Bank.Services.Implementations
         private readonly ILogger<SuperAdminService> _logger;
 
         private readonly IMemoryCache _cache;
+        private readonly IBackgroundJobClient _jobs;
 
         public SuperAdminService(
             IUnitOfWork unitOfWork,
             AppDbContext context,
             IUserService userService,
             ILogger<SuperAdminService> logger,
-            IMemoryCache cache)
+            IMemoryCache cache,
+            IBackgroundJobClient jobs)
         {
             _unitOfWork = unitOfWork;
             _context = context;
             _logger = logger;
             _userService = userService;
             _cache = cache;
+            _jobs = jobs;
         }
         public async Task<ApiResponse<DateTime?>> SetUserSubscriptionAsync(
     Guid userId, SetUserSubscriptionDto dto, CancellationToken ct = default)
@@ -122,6 +127,142 @@ namespace Bank.Services.Implementations
                 .ExecuteUpdateAsync(s => s.SetProperty(u => u.MaxDataFileRows, dto.MaxRows), ct);
 
             return ApiResponse<long?>.SuccessResponse(dto.MaxRows, "تم تحديث الحد.");
+        }
+
+        public async Task<ApiResponse<DeleteUserResultDto>> DeleteUserAsync(Guid userId, CancellationToken ct = default)
+        {
+            var user = await _context.Users.AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => new
+                {
+                    u.Role,
+                    u.GroupId,
+                    GroupAdminId = u.Group != null ? u.Group.AdminId : null,
+                    GroupAdminName = u.Group != null && u.Group.Admin != null ? u.Group.Admin.FullName : null,
+                    AdministersGroup = _context.Groups.Any(g => g.AdminId == u.Id)
+                })
+                .FirstOrDefaultAsync(ct);
+
+            if (user is null) return ApiResponse<DeleteUserResultDto>.Fail("المستخدم غير موجود.", null, 404);
+
+            //if (user.Role != UserRole.User || user.AdministersGroup)
+            //    return ApiResponse<DeleteUserResultDto>.Fail("الـ endpoint ده لحذف اليوزرز العاديين بس.", null, 400);
+            // 💡 1. منع حذف حسابات الـ SuperAdmin نهائياً
+            if (user.Role == UserRole.SuperAdmin)
+                return ApiResponse<DeleteUserResultDto>.Fail("لا يمكن حذف حساب Super Admin من النظام.", null, 400);
+
+            // 💡 2. منع حذف الأدمن الذي يدير مجموعة حالياً حتى يتم تغيير أدمن الجروب أو حذف الجروب أولاً
+            if (user.AdministersGroup)
+                return ApiResponse<DeleteUserResultDto>.Fail("هذا المستخدم يدير مجموعة حالياً. يرجى تعيين أدمن آخر للمجموعة أولاً قبل حذفه.", null, 400);
+
+            Guid? adminId = null;
+            if (user.GroupId.HasValue)
+            {
+                adminId = user.GroupAdminId;
+                if (adminId is null)
+                    return ApiResponse<DeleteUserResultDto>.Fail(
+                        "الجروب ده مالوش أدمن، عيّن أدمن للجروب الأول عشان تنتقل ليه الملفات.", null, 409);
+            }
+
+            var transferredData = 0;
+            var transferredChecks = 0;
+
+            await using (var tx = await _context.Database.BeginTransactionAsync(ct))
+            {
+                // قفل الحساب فورًا (مايقدرش يدخل ولا يكمل بتوكنه)
+                await _context.Users.Where(u => u.Id == userId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(u => u.IsActive, false)
+                        .SetProperty(u => u.FcmToken, (string?)null)
+                        .SetProperty(u => u.FcmTokenUpdatedAt, (DateTime?)null), ct);
+
+                await _context.RefreshTokens.Where(t => t.UserId == userId && !t.IsRevoked)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsRevoked, true), ct);
+
+                if (adminId.HasValue)
+                {
+                    var groupId = user.GroupId!.Value;
+
+                    // نقل ملكية ملفات الجروب بس (الـ unique indexes بتاعة التشيك آمنة لأن GroupId ثابت)
+                    transferredData = await _context.DataFiles
+                        .Where(f => f.OwnerId == userId && f.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(f => f.OwnerId, adminId.Value), ct);
+
+                    transferredChecks = await _context.CheckFiles
+                        .Where(f => f.UploadedBy == userId && f.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(f => f.UploadedBy, adminId.Value), ct);
+
+                    // خرائط الجروب (مفيش FK عليها)
+                    await _context.Set<MapResult>()
+                        .Where(m => m.UserId == userId && m.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.UserId, adminId.Value), ct);
+
+                    await _context.Set<MapUploadedFile>()
+                        .Where(m => m.UploadedBy == userId && m.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.UploadedBy, adminId.Value), ct);
+                }
+
+                await tx.CommitAsync(ct);
+            }
+
+            _cache.Remove($"user-active:{userId}");
+
+            // باقي الحذف (ثقيل) في الخلفية
+            var transferTo = adminId;
+            _jobs.Enqueue<UserDeletionJob>(j => j.RunAsync(userId, transferTo, CancellationToken.None));
+
+            _logger.LogWarning(
+                "User {UserId} deactivated and queued for deletion; transferred {Data} data file(s) and {Checks} check file(s) to admin {AdminId}",
+                userId, transferredData, transferredChecks, adminId);
+
+            return ApiResponse<DeleteUserResultDto>.SuccessResponse(
+                new DeleteUserResultDto(transferredData, transferredChecks, user.GroupAdminName),
+                "اتقفل الحساب والحذف الكامل شغال في الخلفية.", 202);
+        }
+
+        public async Task<ApiResponse<bool>> DeleteGroupAsync(Guid groupId, CancellationToken ct = default)
+        {
+            if (!await _context.Groups.AnyAsync(g => g.Id == groupId, ct))
+                return ApiResponse<bool>.Fail("الجروب غير موجود.", null, 404);
+
+            var membersCount = await _context.Users.CountAsync(u => u.GroupId == groupId, ct);
+            if (membersCount > 0)
+                return ApiResponse<bool>.Fail(
+                    $"مينفعش تحذف جروب فيه أعضاء ({membersCount}). شيل الأعضاء الأول.", null, 409);
+
+            await using var tx = await _context.Database.BeginTransactionAsync(ct);
+
+            // ملف التشيك النشط بتاع الجروب هيبقى شخصي: نوقفه عشان ما يتعارضش مع "ملف نشط واحد لكل يوزر منفرد"
+            await _context.CheckFiles
+                .Where(f => f.GroupId == groupId && f.IsActive)
+                .ExecuteUpdateAsync(s => s.SetProperty(f => f.IsActive, false), ct);
+
+            var dataFiles = await _context.DataFiles.CountAsync(f => f.GroupId == groupId, ct);
+            var checkFiles = await _context.CheckFiles.CountAsync(f => f.GroupId == groupId, ct);
+
+            // الخرائط مالهاش FK على الجروب، فلازم نمسحها يدويًا (صفوفها بتتمسح بالـ cascade)
+            await _context.Set<MapResult>().Where(m => m.GroupId == groupId).ExecuteDeleteAsync(ct);
+            await _context.Set<MapUploadedFile>().Where(m => m.GroupId == groupId).ExecuteDeleteAsync(ct);
+
+            // شرط "مفيش أعضاء" جوه نفس الـ DELETE: لو حد اتضاف في نفس اللحظة مش هيتمسح الجروب
+            var deleted = await _context.Groups
+                .Where(g => g.Id == groupId && !_context.Users.Any(u => u.GroupId == g.Id))
+                .ExecuteDeleteAsync(ct);
+
+            if (deleted == 0)
+            {
+                await tx.RollbackAsync(ct);
+                return ApiResponse<bool>.Fail("الجروب اتضاف له أعضاء، حاول تاني.", null, 409);
+            }
+
+            await tx.CommitAsync(ct);
+
+            _logger.LogWarning(
+                "Group {GroupId} deleted; {DataFiles} data file(s) and {CheckFiles} check file(s) became personal",
+                groupId, dataFiles, checkFiles);
+
+            return ApiResponse<bool>.SuccessResponse(true,
+                $"اتحذف الجروب. فضل {dataFiles} ملف داتا و{checkFiles} ملف تشيك وبقوا ملفات شخصية لأصحابهم.");
         }
         //Admins
         public async Task<ApiResponse<AdminResponseDto>> CreateAdminAsync(CreateAdminDto dto, CancellationToken ct = default)

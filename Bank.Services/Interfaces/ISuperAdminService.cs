@@ -30,5 +30,7 @@ public interface ISuperAdminService
     Task<ApiResponse<UserResponseDto>> RemoveUserFromGroupAsync(Guid userId, CancellationToken ct = default);
     Task<ApiResponse<DateTime?>> SetUserSubscriptionAsync(Guid userId, SetUserSubscriptionDto dto, CancellationToken ct = default);
     Task<ApiResponse<long?>> SetUserDataRowLimitAsync(Guid userId, SetDataRowLimitDto dto, CancellationToken ct = default);
+    Task<ApiResponse<DeleteUserResultDto>> DeleteUserAsync(Guid userId, CancellationToken ct = default);
+    Task<ApiResponse<bool>> DeleteGroupAsync(Guid groupId, CancellationToken ct = default);
 
 }

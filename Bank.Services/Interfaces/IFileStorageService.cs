@@ -5,4 +5,6 @@
     Task<Stream> OpenReadAsync(string storagePath, CancellationToken cancellationToken = default);
 
     Task DeleteAsync(string storagePath, CancellationToken cancellationToken = default);
+
+    Task DeleteFolderAsync(string subFolder, CancellationToken cancellationToken = default);
 }

@@ -147,4 +147,17 @@ public class SuperAdminUsersController : ControllerBase
         var result = await _superAdminService.SetUserDataRowLimitAsync(id, dto, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+
+    /// <summary>
+    /// Deletes a user. If the user is in a group, their data/check files are transferred to the group admin first.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<DeleteUserResultDto>), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteUser(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _superAdminService.DeleteUserAsync(id, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
 }

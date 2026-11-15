@@ -65,5 +65,23 @@ namespace Bank.Services.Implementations
             }
             return Task.CompletedTask;
         }
+
+        public Task DeleteFolderAsync(string subFolder, CancellationToken cancellationToken = default)
+        {
+            var root = Path.GetFullPath(_rootPath).TrimEnd(Path.DirectorySeparatorChar);
+            var full = Path.GetFullPath(Path.Combine(root, subFolder)).TrimEnd(Path.DirectorySeparatorChar);
+
+            // حماية: ما نمسحش الـ root نفسه ولا أي حاجة برّاه
+            if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase) ||
+                !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Invalid storage folder.");
+
+            if (Directory.Exists(full))
+            {
+                Directory.Delete(full, recursive: true);
+                _logger.LogInformation("Deleted stored folder {Path}", full);
+            }
+            return Task.CompletedTask;
+        }
     }
 }
