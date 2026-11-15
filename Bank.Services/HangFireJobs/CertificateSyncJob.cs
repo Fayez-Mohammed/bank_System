@@ -161,7 +161,12 @@ public class CertificateSyncJob
                 run.State.BaselinePhase, run.Stats.NewPending, run.Stats.NewIndexed, run.Stats.Updated, run.Stats.Removed,
                 run.Stats.ChangesSeen, run.Stats.ReconcileNew, run.Stats.FoldersScanned, run.Stats.DriveRequests,
                 run.Clock.ElapsedMilliseconds, run.Stats.BudgetExhausted);
-
+            if (run.Stats.NewPending > 0)
+            {
+                var newCount = run.Stats.NewPending;
+                _jobs.Enqueue<CertificateNotificationJob>(j =>
+                    j.SendNewCertificatesNotificationAsync(newCount, CancellationToken.None));
+            }
             if (run.OutOfTime)
             {
                 // لسه في شغل: تشغيل تاني على طول (بيستنى القفل ده يتفك، ومافيش worker محجوز مستني)

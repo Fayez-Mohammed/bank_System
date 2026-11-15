@@ -62,6 +62,25 @@ namespace Bank.Services.Implementations
             bool Iscorrect=await _userManager.CheckPasswordAsync(user, password);
             return Iscorrect;
         }
+        public async Task<IdentityResult> ResetPasswordAsync(ApplicationUser user, string newPassword)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            ArgumentException.ThrowIfNullOrWhiteSpace(newPassword);
+
+            // الأدمن مش بيعرف الباسورد القديم، فبنستخدم reset token داخلي (AddDefaultTokenProviders متفعّل عندك).
+            // ResetPasswordAsync بيتحقق من سياسة الباسورد، ويحدّث الهاش والـ security stamp، ويحفظ في نفس الخطوة.
+            var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+            return await _userManager.ResetPasswordAsync(user, token, newPassword);
+        }
+        public async Task<IdentityResult> ChangePasswordAsync(ApplicationUser user, string currentPassword, string newPassword)
+        {
+            ArgumentNullException.ThrowIfNull(user);
+            ArgumentException.ThrowIfNullOrEmpty(currentPassword);
+            ArgumentException.ThrowIfNullOrWhiteSpace(newPassword);
+
+            // بيتحقق من الباسورد الحالي وسياسة الباسورد الجديد، ويحدّث الهاش والـ security stamp
+            return await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
+        }
         public async Task<ApiResponse<MyGroupDTO>> GetMyGroupAsync(string userId)
         {
             var user = await _userManager.FindByIdAsync(userId);

@@ -1,12 +1,13 @@
-using System.Security.Claims;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AdminDTOs;
 using Bank.Shared.DTOs.AuthDTOs;
+using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.DTOs.UserDTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace Bank.API.Controllers
 {
@@ -92,7 +93,15 @@ namespace Bank.API.Controllers
             var group = await _service.GetMyGroupAsync(userId.ToString());
             return Ok(group);
         }
-
+        [HttpPost("change-password")]
+        [Authorize]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO dto, CancellationToken cancellationToken)
+        {
+            var result = await _service.ChangePasswordAsync(CurrentUserId, dto, cancellationToken);
+            return StatusCode(result.StatusCode, result);
+        }
     }
 }
 

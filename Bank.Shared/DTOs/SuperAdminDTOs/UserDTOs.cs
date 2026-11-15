@@ -24,7 +24,22 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         public Guid? GroupId { get; set; }
         public UserPermissionDto? Permissions { get; set; }
     }
+    public class ChangePasswordDTO
+    {
+        [Required]
+        public required string CurrentPassword { get; set; }
 
+        [Required, MinLength(8), MaxLength(128)]   // نفس حد الإنشاء (CreateUserDto)
+        public required string NewPassword { get; set; }
+    }
+    //public class UpdateUserDto
+    //{
+    //    [Required, MaxLength(150)]
+    //    public string FullName { get; set; } = null!;
+
+    //    [Required, EmailAddress]
+    //    public string Email { get; set; } = null!;
+    //}
     public class UpdateUserDto
     {
         [Required, MaxLength(150)]
@@ -32,8 +47,12 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
 
         [Required, EmailAddress]
         public string Email { get; set; } = null!;
-    }
 
+        /// اختياري: لو اتبعت، السوبر أدمن بيغيّر كلمة مرور المستخدم (8 حروف على الأقل).
+        /// فاضي أو null = من غير تغيير.
+        [MaxLength(128)]
+        public string? NewPassword { get; set; }
+    }
     public class AssignUserToGroupDto
     {
         [Required]

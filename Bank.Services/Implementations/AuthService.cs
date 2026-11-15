@@ -1,17 +1,18 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Cryptography;
-using System.Text;
 using Bank.DAL.Context;
 using Bank.DAL.Models.BaseModels;
 using Bank.DAL.Models.SystemModels;
 using Bank.Services.Interfaces;
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AuthDTOs;
+using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.DTOs.UserDTOs;
 using Bank.Shared.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Bank.Services.Implementations
 {
@@ -42,7 +43,30 @@ namespace Bank.Services.Implementations
 
         private int RefreshTokenDays =>
             int.TryParse(_conf["Auth:JWT:RefreshTokenDays"], out var days) && days > 0 ? days : 30;
+        public async Task<ApiResponse<bool>> ChangePasswordAsync(
+    Guid userId, ChangePasswordDTO dto, CancellationToken ct = default)
+        {
+            if (dto.CurrentPassword == dto.NewPassword)
+                return ApiResponse<bool>.Fail("الباسورد الجديد لازم يكون مختلف عن الحالي.", null, 400);
 
+            var user = await _userService.GetByIdAsync(userId.ToString());
+            if (user is null || !user.IsActive)
+                return ApiResponse<bool>.Fail("المستخدم غير موجود.", null, 404);
+
+            var result = await _userService.ChangePasswordAsync(user, dto.CurrentPassword, dto.NewPassword);
+            if (!result.Succeeded)
+            {
+                // 400 مش 401: الـ interceptor في الفرونت بيعتبر 401 جلسة منتهية وبيعمل refresh/logout
+                if (result.Errors.Any(e => e.Code == "PasswordMismatch"))
+                    return ApiResponse<bool>.Fail("الباسورد الحالي غلط.", null, 400);
+
+                var errors = result.Errors.Select(e => e.Description).ToList();
+                return ApiResponse<bool>.Fail("تعذّر تغيير الباسورد.", errors, 400);
+            }
+
+            _logger.LogInformation("User {UserId} changed their password", userId);
+            return ApiResponse<bool>.SuccessResponse(true, "تم تغيير الباسورد.");
+        }
         public async Task<ApiResponse<RegisterResponseDTO>> RegisterAsync(RegisterDTO registerDTO)
         {
             if (registerDTO is null)

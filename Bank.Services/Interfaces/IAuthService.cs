@@ -1,5 +1,6 @@
 using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.AuthDTOs;
+using Bank.Shared.DTOs.SuperAdminDTOs;
 using Bank.Shared.DTOs.UserDTOs;
 using System;
 using System.Collections.Generic;
@@ -14,7 +15,7 @@ namespace Bank.Services.Interfaces
         Task<ApiResponse<LoginResponseDTO>> RefreshAsync(RefreshTokenRequestDTO request, CancellationToken ct = default);
         Task<ApiResponse<bool>> LogoutAsync(LogoutRequestDTO request, CancellationToken ct = default);
         Task<ApiResponse<bool>> ResetUserDeviceAsync(Guid actorId, Guid targetUserId, CancellationToken ct = default);
-
+        Task<ApiResponse<bool>> ChangePasswordAsync(Guid userId, ChangePasswordDTO dto, CancellationToken ct = default);
         Task<ApiResponse<MyGroupDTO>> GetMyGroupAsync(string userId);
     }
 }

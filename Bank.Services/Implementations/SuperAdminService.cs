@@ -625,30 +625,72 @@ namespace Bank.Services.Implementations
 
             return ApiResponse<UserResponseDto>.SuccessResponse(user);
         }
+        private const int MinPasswordLength = 8;   // نفس حد CreateUserDto
 
         public async Task<ApiResponse<UserResponseDto>> UpdateUserAsync(Guid userId, UpdateUserDto dto, CancellationToken ct = default)
         {
             var user = await _userService.GetByIdAsync(userId.ToString());
-            if (user is null || user.Role != UserRole.User)
+            if (user is null )
             {
                 _logger.LogWarning("UpdateUser failed: {UserId} not found", userId);
                 return ApiResponse<UserResponseDto>.Fail("User not found.", null, 404);
             }
 
+            var changePassword = !string.IsNullOrWhiteSpace(dto.NewPassword);
+            if (changePassword && dto.NewPassword!.Length < MinPasswordLength)
+                return ApiResponse<UserResponseDto>.Fail($"كلمة المرور لازم تكون {MinPasswordLength} حروف على الأقل.", null, 400);
+
             user.FullName = dto.FullName;
             user.Email = dto.Email;
 
-            //var result = await _userManager.UpdateAsync(user);
-            //if (!result.Succeeded)
-            //{
-            //    var errors = result.Errors.Select(e => e.Description).ToList();
-            //    _logger.LogWarning("UpdateUser {UserId} failed: {Errors}", userId, string.Join("; ", errors));
-            //    return ApiResponse<UserResponseDto>.Fail("Failed to update user.", null, 400);
-            //}
+            if (changePassword)
+            {
+                // لو الباسورد اترفض، مفيش أي حاجة بتتحفظ (حتى الاسم والإيميل)
+                var reset = await _userService.ResetPasswordAsync(user, dto.NewPassword!);
+                if (!reset.Succeeded)
+                {
+                    var errors = reset.Errors.Select(e => e.Description).ToList();
+                    _logger.LogWarning("UpdateUser {UserId}: password change rejected: {Errors}", userId, string.Join("; ", errors));
+                    return ApiResponse<UserResponseDto>.Fail("تعذّر تغيير كلمة المرور.", errors, 400);
+                }
+
+                // الجلسات القديمة (refresh tokens) تتلغي: المستخدم لازم يدخل بالباسورد الجديد
+                await _context.RefreshTokens
+                    .Where(t => t.UserId == userId && !t.IsRevoked)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsRevoked, true), ct);
+            }
+
             await _unitOfWork.CompleteAsync();
-            _logger.LogInformation("User {UserId} updated", userId);
-            return await GetUserByIdAsync(userId, ct);
+            _logger.LogInformation("User {UserId} updated{PasswordNote}", userId, changePassword ? " (password changed)" : "");
+
+            var response = await GetUserByIdAsync(userId, ct);
+            return changePassword && response.Success
+                ? ApiResponse<UserResponseDto>.SuccessResponse(response.Data!, "تم تحديث بيانات المستخدم وتغيير كلمة المرور.")
+                : response;
         }
+        //public async Task<ApiResponse<UserResponseDto>> UpdateUserAsync(Guid userId, UpdateUserDto dto, CancellationToken ct = default)
+        //{
+        //    var user = await _userService.GetByIdAsync(userId.ToString());
+        //    if (user is null || user.Role != UserRole.User)
+        //    {
+        //        _logger.LogWarning("UpdateUser failed: {UserId} not found", userId);
+        //        return ApiResponse<UserResponseDto>.Fail("User not found.", null, 404);
+        //    }
+
+        //    user.FullName = dto.FullName;
+        //    user.Email = dto.Email;
+
+        //    //var result = await _userManager.UpdateAsync(user);
+        //    //if (!result.Succeeded)
+        //    //{
+        //    //    var errors = result.Errors.Select(e => e.Description).ToList();
+        //    //    _logger.LogWarning("UpdateUser {UserId} failed: {Errors}", userId, string.Join("; ", errors));
+        //    //    return ApiResponse<UserResponseDto>.Fail("Failed to update user.", null, 400);
+        //    //}
+        //    await _unitOfWork.CompleteAsync();
+        //    _logger.LogInformation("User {UserId} updated", userId);
+        //    return await GetUserByIdAsync(userId, ct);
+        //}
 
         //public async Task<ApiResponse<bool>> SetUserToggleActiveStatusAsync(Guid userId, CancellationToken ct = default)
         //{
