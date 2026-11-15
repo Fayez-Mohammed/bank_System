@@ -132,7 +132,7 @@ public class CertificateSyncJob
             Clock = Stopwatch.StartNew(),
             Budget = budget
         };
-
+        var baselineWasCompleted = run.State.BaselinePhase == CertificateBaselinePhase.Completed;
         try
         {
             run.State.LastRunStartedAt = run.Stats.StartedAt;
@@ -161,12 +161,12 @@ public class CertificateSyncJob
                 run.State.BaselinePhase, run.Stats.NewPending, run.Stats.NewIndexed, run.Stats.Updated, run.Stats.Removed,
                 run.Stats.ChangesSeen, run.Stats.ReconcileNew, run.Stats.FoldersScanned, run.Stats.DriveRequests,
                 run.Clock.ElapsedMilliseconds, run.Stats.BudgetExhausted);
-            if (run.Stats.NewPending > 0)
-            {
-                var newCount = run.Stats.NewPending;
-                _jobs.Enqueue<CertificateNotificationJob>(j =>
-                    j.SendNewCertificatesNotificationAsync(newCount, CancellationToken.None));
-            }
+            //if (run.Stats.NewPending > 0)
+            //{
+            //    var newCount = run.Stats.NewPending;
+            //    _jobs.Enqueue<CertificateNotificationJob>(j =>
+            //        j.SendNewCertificatesNotificationAsync(newCount, CancellationToken.None));
+            //}
             if (run.OutOfTime)
             {
                 // لسه في شغل: تشغيل تاني على طول (بيستنى القفل ده يتفك، ومافيش worker محجوز مستني)
@@ -195,6 +195,7 @@ public class CertificateSyncJob
         finally
         {
             await _store.ReleaseLockAsync(LockKey);
+            NotifyNewCertificates(run, baselineWasCompleted);
         }
     }
 
@@ -625,7 +626,27 @@ public class CertificateSyncJob
         run.State.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
     }
+    /// <summary>
+    /// بتتنادي في الـ finally: الإشعار يتبعت حتى لو التشغيل فشل بعد ما سجّل شهادات جديدة،
+    /// وفشل الـ Enqueue ما يأثرش على حالة المزامنة.
+    /// </summary>
+    private void NotifyNewCertificates(Run run, bool baselineWasCompleted)
+    {
+        // مفيش إشعارات أثناء الفهرسة الأولى (ممكن تبقى آلاف الملفات من الـ backfill)
+        if (!baselineWasCompleted || run.Stats.NewPending <= 0) return;
 
+        try
+        {
+            var count = run.Stats.NewPending;
+            var batchNo = run.Stats.BatchNo;
+            _jobs.Enqueue<CertificateNotificationJob>(j =>
+                j.SendNewCertificatesNotificationAsync(count, batchNo, CancellationToken.None));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not enqueue the new-certificates notification");
+        }
+    }
     private void LogProgress(Run run)
     {
         var st = run.Stats;

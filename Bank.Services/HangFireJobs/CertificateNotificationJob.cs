@@ -1,6 +1,7 @@
 ﻿using Bank.DAL.Context;
-using Bank.Shared.Enums;
 using Bank.Services.Interfaces;
+using Bank.Shared.Enums;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -19,24 +20,28 @@ public class CertificateNotificationJob
         _logger = logger;
     }
 
-    public async Task SendNewCertificatesNotificationAsync(int newCertificatesCount, CancellationToken ct)
+    // محاولة تانية بس: الإرسال مش idempotent، والتكرار معناه إشعار مزدوج
+    [AutomaticRetry(Attempts = 1)]
+    public async Task SendNewCertificatesNotificationAsync(int newCertificatesCount, int? batchNo, CancellationToken ct)
     {
         if (newCertificatesCount <= 0) return;
 
-        // جلب جميع المستخدمين النشطين (غير السوبر أدمن)
+        // اللي عنده token بس: بيوفّر query لكل يوزر ومابيملاش اللوج
         var userIds = await _db.Users
-            .Where(u => u.IsActive && u.Role != UserRole.SuperAdmin)
+            .Where(u => u.IsActive && u.Role != UserRole.SuperAdmin && u.FcmToken != null)
             .Select(u => u.Id)
             .ToListAsync(ct);
 
         if (userIds.Count == 0) return;
 
         var title = "شهادات جديدة";
-        var message = FormatNotificationMessage(newCertificatesCount);
+        var message = FormatMessage(newCertificatesCount, batchNo);
 
-        _logger.LogInformation("Sending new certificate notification ({Count} certs) to {UserCount} users",
-            newCertificatesCount, userIds.Count);
+        _logger.LogInformation(
+            "Sending new certificate notification (batch {Batch}, {Count} certs) to {UserCount} users",
+            batchNo, newCertificatesCount, userIds.Count);
 
+        // بالتتابع: الـ notifier بيستخدم DbContext واحد مش thread-safe، فماتعملش Parallel هنا
         foreach (var userId in userIds)
         {
             try
@@ -50,11 +55,18 @@ public class CertificateNotificationJob
         }
     }
 
-    private static string FormatNotificationMessage(int count) => count switch
+    private static string FormatMessage(int count, int? batchNo)
     {
-        1 => "تم إدراج شهادة جديدة واحدة في النظام.",
-        2 => "تم إدراج شهادتين جديدتين في النظام.",
-        >= 3 and <= 10 => $"تم إدراج {count} شهادات جديدة في النظام.",
-        _ => $"تم إدراج {count} شهادة جديدة في النظام."
-    };
+        var countPhrase = count switch
+        {
+            1 => "شهادة واحدة",
+            2 => "شهادتان",
+            >= 3 and <= 10 => $"{count} شهادات",
+            _ => $"{count} شهادة"
+        };
+
+        return batchNo.HasValue
+            ? $"نزلت دفعة جديدة (رقم {batchNo}) فيها {countPhrase}."
+            : $"نزلت دفعة جديدة فيها {countPhrase}.";
+    }
 }
