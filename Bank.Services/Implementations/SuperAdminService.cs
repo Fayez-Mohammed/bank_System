@@ -793,10 +793,8 @@ namespace Bank.Services.Implementations
 
             return await GetUserByIdAsync(userId, ct);
         }
-
         public async Task<ApiResponse<UserResponseDto>> RemoveUserFromGroupAsync(Guid userId, CancellationToken ct = default)
         {
-          
             var user = await _userService.GetByIdAsync(userId.ToString());
             if (user is null || user.Role != UserRole.User)
             {
@@ -805,15 +803,85 @@ namespace Bank.Services.Implementations
             }
 
             var previousGroupId = user.GroupId;
-            user.GroupId = null;
-            await _unitOfWork.CompleteAsync();
 
-            // أذونات الفرز كانت على ملفات الجروب ده
-            await _context.UserDataFilePermissions.Where(p => p.UserId == userId).ExecuteDeleteAsync(ct);
+            // أدمن الجروب اللي هتنتقل له الملفات
+            Guid? adminId = null;
+            if (previousGroupId.HasValue)
+            {
+                adminId = await _context.Groups.AsNoTracking()
+                    .Where(g => g.Id == previousGroupId.Value)
+                    .Select(g => g.AdminId)
+                    .FirstOrDefaultAsync(ct);
 
-            _logger.LogInformation("User {UserId} removed from Group {GroupId}", userId, previousGroupId);
+                if (adminId is null)
+                    return ApiResponse<UserResponseDto>.Fail(
+                        "الجروب ده مالوش أدمن، عيّن أدمن للجروب الأول عشان تنتقل ليه الملفات.", null, 409);
+            }
+
+            var transferredData = 0;
+            var transferredChecks = 0;
+
+            // الإخراج من الجروب ونقل الملكية في transaction واحدة: يا الاتنين يحصلوا يا ولا واحد
+            await using (var tx = await _context.Database.BeginTransactionAsync(ct))
+            {
+                user.GroupId = null;
+                await _unitOfWork.CompleteAsync();
+
+                // أذونات الفرز كانت على ملفات الجروب ده
+                await _context.UserDataFilePermissions.Where(p => p.UserId == userId).ExecuteDeleteAsync(ct);
+
+                if (adminId.HasValue)
+                {
+                    var groupId = previousGroupId!.Value;
+
+                    // ملفات الجروب بس (الـ GroupId ثابت فالـ unique indexes بتاعة التشيك مش بتتأثر)
+                    transferredData = await _context.DataFiles
+                        .Where(f => f.OwnerId == userId && f.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(f => f.OwnerId, adminId.Value), ct);
+
+                    transferredChecks = await _context.CheckFiles
+                        .Where(f => f.UploadedBy == userId && f.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(f => f.UploadedBy, adminId.Value), ct);
+
+                    // خرائط الجروب (مفيش FK عليها)
+                    await _context.Set<MapResult>()
+                        .Where(m => m.UserId == userId && m.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.UserId, adminId.Value), ct);
+
+                    await _context.Set<MapUploadedFile>()
+                        .Where(m => m.UploadedBy == userId && m.GroupId == groupId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.UploadedBy, adminId.Value), ct);
+                }
+
+                await tx.CommitAsync(ct);
+            }
+
+            _logger.LogInformation(
+                "User {UserId} removed from Group {GroupId}; transferred {Data} data file(s) and {Checks} check file(s) to admin {AdminId}",
+                userId, previousGroupId, transferredData, transferredChecks, adminId);
 
             return await GetUserByIdAsync(userId, ct);
         }
+        //public async Task<ApiResponse<UserResponseDto>> RemoveUserFromGroupAsync(Guid userId, CancellationToken ct = default)
+        //{
+
+        //    var user = await _userService.GetByIdAsync(userId.ToString());
+        //    if (user is null || user.Role != UserRole.User)
+        //    {
+        //        _logger.LogWarning("RemoveUserFromGroup failed: User {UserId} not found", userId);
+        //        return ApiResponse<UserResponseDto>.Fail("User not found.", null, 404);
+        //    }
+
+        //    var previousGroupId = user.GroupId;
+        //    user.GroupId = null;
+        //    await _unitOfWork.CompleteAsync();
+
+        //    // أذونات الفرز كانت على ملفات الجروب ده
+        //    await _context.UserDataFilePermissions.Where(p => p.UserId == userId).ExecuteDeleteAsync(ct);
+
+        //    _logger.LogInformation("User {UserId} removed from Group {GroupId}", userId, previousGroupId);
+
+        //    return await GetUserByIdAsync(userId, ct);
+        //}
     }
 }
