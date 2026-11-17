@@ -184,14 +184,14 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         // ---------- 2) الـ VIN ----------
         // مهم: رقم العقد (17 رقم بس) بيطابق شكل الـ VIN. فبنشترط حرف إنجليزي واحد على الأقل،
         // وبنفضّل الكلمة اللي على نفس صف عنوان "رقم الهيكل".
-        var vinRegex = new Regex(@"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+        var vinRegex = new Regex(@"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])", RegexOptions.IgnoreCase);
 
         static (Word? Word, string? Vin) FindVin(IEnumerable<TawToken> candidates, Regex rx)
         {
             foreach (var c in candidates)
             {
                 var m = rx.Match(c.Word.Text);
-                if (m.Success && m.Value.Any(char.IsAsciiLetter)) return (c.Word, m.Value);
+                if (m.Success && m.Value.Any(char.IsAsciiLetter)) return (c.Word, m.Value.ToUpperInvariant());
             }
             return (null, null);
         }
@@ -809,7 +809,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 
         var vinWord = words.FirstOrDefault(w =>
         {
-            var m = Regex.Match(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])");
+            var m = Regex.Match(w.Text, @"(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])", RegexOptions.IgnoreCase);
             return m.Success && m.Value.Any(char.IsLetter) && m.Value.Any(char.IsDigit);
         });
 
@@ -817,7 +817,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         // بنقبل 6–20 حرف/رقم في نطاق قسم بيانات الأصل المؤجر.
         vinWord ??= words
             .Where(w => w.BoundingBox.Bottom > H * 0.30 && w.BoundingBox.Bottom < H * 0.60 &&
-                        Regex.IsMatch(w.Text, @"^[A-HJ-NPR-Z0-9]{6,20}$") &&
+                        Regex.IsMatch(w.Text, @"^[A-HJ-NPR-Z0-9]{6,20}$", RegexOptions.IgnoreCase) &&
                         w.Text.Any(char.IsDigit))
             .OrderBy(w => w.BoundingBox.Bottom)
             .FirstOrDefault();
@@ -825,8 +825,8 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
         if (vinWord == null)
             return new CertLayout(W, H, certNo, null, null, 0, cells);
 
-        var vinMatch = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}");
-        var vin = vinMatch.Success ? vinMatch.Value : vinWord.Text;
+        var vinMatch = Regex.Match(vinWord.Text, @"[A-HJ-NPR-Z0-9]{17}", RegexOptions.IgnoreCase);
+        var vin = (vinMatch.Success ? vinMatch.Value : vinWord.Text).ToUpperInvariant();
         double vinBase = vinWord.Letters.Average(l => l.StartBaseLine.Y);
 
         // حروف قسم "بيانات الأصل المؤجر": من صف الـ VIN لحد ~55pt فوقه (العنوان خارج النطاق)
@@ -1770,7 +1770,6 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 }
 
 
-
 //using System.Collections.Concurrent;
 //using System.Diagnostics;
 //using System.Text;
@@ -1879,9 +1878,19 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //        var page = doc.GetPage(1);
 //        var text = string.Join(" ", page.GetWords().Select(w => w.Text));
 
-//        // معايير حاسمة لشهادات توثيق
-//        if (text.Contains("ARN") ||
-//            text.Contains("TAW") ||
+//        // شهادات سجل لازم تتفحص الأول: رقم الشهادة REPO-xxx-xxxxxxxx
+//        // أو رقم العقد CRN-xxx-xxxxxxxx موجودين في الـ text layer.
+//        // من غير الفحص ده، جسم شهادة سجل نفسه فيه "سند تنفيذي"،
+//        // والعنوان الإنجليزي ممكن يحتوي "TAW" (مثلاً ALARTAWYAH).
+//        if (Regex.IsMatch(text, @"REPO-\d{3}-\d{8}") ||
+//            Regex.IsMatch(text, @"CRN-\d{3}-\d{8}"))
+//        {
+//            return CertificateProvider.Sijil;
+//        }
+
+//        // معايير حاسمة لشهادات توثيق (كلمات كاملة، مش substring).
+//        if (Regex.IsMatch(text, @"(?<![A-Z])ARN(?![A-Z])") ||
+//            Regex.IsMatch(text, @"(?<![A-Z])TAW(?![A-Z])") ||
 //            text.Contains("توثيق") ||
 //            text.Contains("سند تنفيذي") ||
 //            Regex.IsMatch(text, @"CRN000\d+"))
@@ -2042,13 +2051,104 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //        // الصف 0 (صف الـ VIN): الموديل في العمود الأوسط
 //        // الصف 1: اللوحة في العمود الأوسط
 //        // الصف 2: اللون في العمود الأوسط | المصنع في العمود الأيمن
+//        //
+//        // ملاحظة: بعض قوالب توثيق بتحط صف "الرقم التسلسلي / سنة الصنع"
+//        // بين صف الـ VIN وصف اللوحة، فالإزاحة الثابتة بتقرا الصف الغلط.
+//        // فبنستخدم العناوين المطبوعة (رقم اللوحة، المصنع، لون الأصل، نوع)
+//        // كأساس أول، وبنرجع للإزاحة القديمة لو العنوان مش موجود.
+//        bool InAsset(Word w) =>
+//            w.BoundingBox.Bottom >= vinY - 60 && w.BoundingBox.Top <= vinY + 25;
+
+//        List<TawToken> ValueLeftOf(Word label, double maxGap, double maxWidth)
+//        {
+//            var candidates = toks
+//                .Where(t => SameRow(t.Word, label, 6) &&
+//                            InAsset(t.Word) &&
+//                            t.Word.BoundingBox.Right < label.BoundingBox.Left - 1 &&
+//                            t.Word.BoundingBox.Left >= label.BoundingBox.Left - maxWidth &&
+//                            !string.IsNullOrWhiteSpace(Clean(t.Text)))
+//                .OrderByDescending(t => t.Word.BoundingBox.Right)
+//                .ToList();
+
+//            if (candidates.Count == 0) return new List<TawToken>();
+//            if (label.BoundingBox.Left - candidates[0].Word.BoundingBox.Right > maxGap)
+//                return new List<TawToken>();
+
+//            var value = new List<TawToken>();
+//            double? lastLeft = null;
+//            foreach (var t in candidates)
+//            {
+//                if (lastLeft.HasValue && lastLeft.Value - t.Word.BoundingBox.Right > maxGap) break;
+//                value.Add(t);
+//                lastLeft = t.Word.BoundingBox.Left;
+//            }
+//            return value;
+//        }
+
 //        string rawModel = GetCellText(0, 180, 380);
 //        string rawPlate = GetCellText(1, 180, 380);
 //        string rawColor = GetCellText(2, 180, 380);
 //        string rawMake = GetCellText(2, 380, 560);
 
+//        var plateLabel = toks.FirstOrDefault(t =>
+//            InAsset(t.Word) && Clean(t.Text) == "اللوحة" &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text) == "رقم"));
+//        if (plateLabel != null)
+//        {
+//            var value = ValueLeftOf(plateLabel.Word, 40, 100);
+//            if (value.Count > 0)
+//                rawPlate = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+//        }
+
+//        var makeLabel = toks.FirstOrDefault(t =>
+//            InAsset(t.Word) && Clean(t.Text) == "المصنع");
+//        if (makeLabel != null)
+//        {
+//            var value = ValueLeftOf(makeLabel.Word, 40, 120);
+//            if (value.Count > 0)
+//                rawMake = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+//        }
+
+//        var colorLabel = toks.FirstOrDefault(t =>
+//            InAsset(t.Word) && Clean(t.Text) == "لون" &&
+//            toks.Any(o => SameRow(o.Word, t.Word) && Clean(o.Text).StartsWith("الأصل")));
+//        if (colorLabel != null)
+//        {
+//            var value = ValueLeftOf(colorLabel.Word, 40, 100);
+//            if (value.Count > 0)
+//                rawColor = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+//        }
+
+//        var modelLabel = toks
+//            .Where(t => InAsset(t.Word) &&
+//                        SameRow(t.Word, vinWord, 6) &&
+//                        Clean(t.Text) == "نوع" &&
+//                        t.Word.BoundingBox.Left < pageWidth * 0.75)
+//            .OrderBy(t => t.Word.BoundingBox.Left)
+//            .FirstOrDefault();
+//        if (modelLabel != null)
+//        {
+//            var value = ValueLeftOf(modelLabel.Word, 40, 220);
+//            if (value.Count > 0)
+//                rawModel = NormalizeTawtheeqTokens(value.Select(t => t.Word));
+//        }
+
 //        var makeV = Snap(rawMake, CertificateLexicon.Makes);
 //        var modelV = Snap(rawModel, CertificateLexicon.Models);
+
+//        // نص توثيق من الـ text layer دقيق، فلو القيمة بتبدأ بموديل معروف
+//        // وفيها وصف إضافي (مثلاً "كورولا 1.8 سيدان بنزين...")، نحافظ على
+//        // النص الكامل بدل ما Snap يختصره لمدخل القاموس بس.
+//        var firstModelToken = rawModel
+//            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+//            .FirstOrDefault();
+//        if (!string.IsNullOrEmpty(firstModelToken) &&
+//            CertificateLexicon.Models.Any(m => NormAr(m) == NormAr(firstModelToken)) &&
+//            NormAr(modelV.Value) != NormAr(rawModel))
+//        {
+//            modelV = (rawModel, false);
+//        }
+
 //        var colorV = ExtractBestColor(rawColor, CertificateLexicon.Colors);
 
 //        // ---------- 5) اللوحة ----------
@@ -2062,6 +2162,7 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //        }
 
 //        string plateLetters = string.Concat(Regex.Matches(rawPlate, @"[\u0621-\u064A]").Select(m => m.Value));
+//        plateLetters = plateLetters.Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا');
 
 //        // ---------- 6) المراجعة ----------
 //        var reasons = new List<string>();
@@ -2638,8 +2739,9 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //                    double minX = valueLetters.Min(X0) - 5;
 //                    double maxX = Math.Max(valueLetters.Max(X1) + 5, labelLeft - 10);
 
-//                    // بعض الموديلات بتتكتب لاتيني/أرقام (مثلاً MG5) والـ OCR العربي
-//                    // بيقراها غلط. الـ text layer هنا سليم، فبنستخدمه مباشرة.
+//                    // بعض الموديلات بتتكتب لاتيني/أرقام (مثلاً MG5) أو مختلطة
+//                    // (مثلاً "ك4") والـ OCR العربي بيقراها ناقصة. الـ text layer
+//                    // هنا سليم، فبنستخدمه مباشرة.
 //                    if (key == "model")
 //                    {
 //                        var ascii = string.Concat(valueLetters.OrderBy(X0).Select(l => l.Value)).Trim();
@@ -2647,6 +2749,12 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //                            ascii.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == ' ') &&
 //                            ascii.Any(char.IsAsciiLetter))
 //                            modelFromText = ascii;
+//                        else if (glyphs.HasFonts)
+//                        {
+//                            var mixed = glyphs.DecodeMixedText(valueLetters);
+//                            if (!string.IsNullOrEmpty(mixed))
+//                                modelFromText = mixed;
+//                        }
 //                    }
 
 //                    cells[key] = new CertCell(key, minX, maxX, topPdf, botPdf);
@@ -3432,3 +3540,4 @@ public sealed class CertificateExtractor : ICertificateExtractor, IDisposable
 //        }
 //    }
 //}
+

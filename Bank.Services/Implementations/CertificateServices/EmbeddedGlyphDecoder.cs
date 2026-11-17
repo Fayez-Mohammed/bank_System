@@ -370,6 +370,54 @@ internal sealed class EmbeddedGlyphDecoder
 //        return System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
 //    }
 
+//    /// <summary>
+//    /// فك خلية موديل مختلطة (عربي + أرقام/لاتيني) زي "ك4" أو "MG5".
+//    /// بيفك العربي من خط الـ glyphs، وبيحافظ على الأرقام/اللاتيني، ويرجع null
+//    /// لو فيه glyph عربي مش معروف أو التركيبة مش آمنة.
+//    /// </summary>
+//    public string? DecodeMixedText(IEnumerable<Letter> letters)
+//    {
+//        var sb = new StringBuilder();
+//        bool hasArabic = false;
+//        bool hasAscii = false;
+
+//        foreach (var l in letters.OrderByDescending(l => Math.Max(l.StartBaseLine.X, l.EndBaseLine.X)))
+//        {
+//            _fonts.TryGetValue(l.FontName ?? "", out var map);
+//            var value = l.Value;
+
+//            // قيمة لاتينية خالصة: نحافظ على ترتيبها كما هي.
+//            if (value.All(c => c < 0x80))
+//            {
+//                foreach (var c in value)
+//                {
+//                    if (char.IsAsciiLetterOrDigit(c)) { sb.Append(c); hasAscii = true; }
+//                    else if (char.IsWhiteSpace(c)) sb.Append(' ');
+//                    else if (c is '-' or '.') sb.Append(c);
+//                }
+//                continue;
+//            }
+
+//            for (int i = value.Length - 1; i >= 0; i--)
+//            {
+//                char c = value[i];
+//                if (c < 0x80)
+//                {
+//                    if (char.IsAsciiLetterOrDigit(c)) { sb.Append(c); hasAscii = true; }
+//                    else if (char.IsWhiteSpace(c)) sb.Append(' ');
+//                    else if (c is '-' or '.') sb.Append(c);
+//                    continue;
+//                }
+//                if (map == null || !map.TryGetValue(c, out var ar) || ar == Ambiguous) return null;
+//                sb.Append(ar);
+//                hasArabic = true;
+//            }
+//        }
+
+//        var text = System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+//        return hasArabic && hasAscii && text.Length > 0 ? text : null;
+//    }
+
 //    private static readonly (int From, int To)[] ArabicRanges =
 //    {
 //        (0x0621, 0x064A),   // الحروف الأساسية
