@@ -700,15 +700,16 @@ public class ReferralJobService : IReferralJobService
 
         if (userScope is null) return ApiResponse<PagedResultDto<ReferralJobSummaryDto>>.Fail("المستخدم غير موجود.");
 
-        var query = _dbContext.ReferralJobs.AsNoTracking();
-        query = userScope.GroupId.HasValue
-            ? query.Where(j => j.GroupId == userScope.GroupId.Value)
-            : query.Where(j => j.GroupId == null && j.UserId == currentUserId);
+        //var query = _dbContext.ReferralJobs.AsNoTracking();
+        //query = userScope.GroupId.HasValue
+        //    ? query.Where(j => j.GroupId == userScope.GroupId.Value)
+        //    : query.Where(j => j.GroupId == null && j.UserId == currentUserId);
 
-        // المستخدم العادي بيشوف عمليات الفرز بتاعته بس (شوف GetJobInScopeAsync)
-        if (userScope.Role == UserRole.User)
-            query = query.Where(j => j.UserId == currentUserId);
-
+        //// المستخدم العادي بيشوف عمليات الفرز بتاعته بس (شوف GetJobInScopeAsync)
+        //if (userScope.Role == UserRole.User)
+        //    query = query.Where(j => j.UserId == currentUserId);
+        // كل واحد (يوزر أو أدمن) بيشوف عمليات الإحالة بتاعته هو بس
+        var query = _dbContext.ReferralJobs.AsNoTracking().Where(j => j.UserId == currentUserId);
         var totalCount = await query.CountAsync(cancellationToken);
 
         var items = await query
