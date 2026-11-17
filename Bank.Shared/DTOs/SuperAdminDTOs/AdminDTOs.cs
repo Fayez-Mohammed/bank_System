@@ -19,7 +19,6 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         [Required, MinLength(8)]
         public string Password { get; set; } = null!;
     }
-
     public class UpdateAdminDto
     {
         [Required, MaxLength(150)]
@@ -27,7 +26,19 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
 
         [Required, EmailAddress]
         public string Email { get; set; } = null!;
+
+        // اختياري: لو اتبعت، السوبر أدمن بيغيّر الباسورد من غير ما يحتاج القديم
+        [MinLength(8)]
+        public string? NewPassword { get; set; }
     }
+    //public class UpdateAdminDto
+    //{
+    //    [Required, MaxLength(150)]
+    //    public string FullName { get; set; } = null!;
+
+    //    [Required, EmailAddress]
+    //    public string Email { get; set; } = null!;
+    //}
 
     public class AdminResponseDto
     {

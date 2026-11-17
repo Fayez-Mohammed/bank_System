@@ -375,7 +375,6 @@ namespace Bank.Services.Implementations
 
             return ApiResponse<AdminResponseDto>.SuccessResponse(admin);
         }
-
         public async Task<ApiResponse<AdminResponseDto>> UpdateAdminAsync(Guid adminId, UpdateAdminDto dto, CancellationToken ct = default)
         {
             var admin = await _userService.GetByIdAsync(adminId.ToString());
@@ -385,19 +384,31 @@ namespace Bank.Services.Implementations
                 return ApiResponse<AdminResponseDto>.Fail("Admin not found.", null, 404);
             }
 
+            // الباسورد الأول، قبل ما نغيّر أي حقل تاني: لو فشل (سياسة الباسورد) مايتحفظش تعديل جزئي
+            var passwordChanged = false;
+            if (!string.IsNullOrWhiteSpace(dto.NewPassword))
+            {
+                var result = await _userService.ResetPasswordAsync(admin, dto.NewPassword);
+                if (!result.Succeeded)
+                {
+                    var errors = result.Errors.Select(e => e.Description).ToList();
+                    _logger.LogWarning("UpdateAdmin {AdminId}: password change rejected: {Errors}", adminId, string.Join("; ", errors));
+                    return ApiResponse<AdminResponseDto>.Fail("تعذّر تغيير الباسورد.", errors, 400);
+                }
+
+                // إنهاء كل الجلسات القديمة: الأدمن لازم يسجل دخول بالباسورد الجديد
+                await _context.RefreshTokens
+                    .Where(t => t.UserId == adminId && !t.IsRevoked)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsRevoked, true), ct);
+
+                passwordChanged = true;
+            }
+
             admin.FullName = dto.FullName;
             admin.Email = dto.Email;
-
-            // Going through UserManager keeps NormalizedEmail in sync.
-            //var result = await _unitOfWork.CompleteAsync()
-            //if (!result.Succeeded)
-            //{
-            //    var errors = result.Errors.Select(e => e.Description).ToList();
-            //    _logger.LogWarning("UpdateAdmin {AdminId} failed: {Errors}", adminId, string.Join("; ", errors));
-            //    return ApiResponse<AdminResponseDto>.Fail(errors);
-            //}
             await _unitOfWork.CompleteAsync();
-            _logger.LogInformation("Admin {AdminId} updated", adminId);
+
+            _logger.LogInformation("Admin {AdminId} updated (passwordChanged={PasswordChanged})", adminId, passwordChanged);
 
             return ApiResponse<AdminResponseDto>.SuccessResponse(new AdminResponseDto
             {
@@ -406,8 +417,40 @@ namespace Bank.Services.Implementations
                 Email = admin.Email!,
                 IsActive = admin.IsActive,
                 CreatedAt = admin.CreatedAt
-            });
+            }, passwordChanged ? "تم التحديث وتغيير الباسورد." : null);
         }
+        //public async Task<ApiResponse<AdminResponseDto>> UpdateAdminAsync(Guid adminId, UpdateAdminDto dto, CancellationToken ct = default)
+        //{
+        //    var admin = await _userService.GetByIdAsync(adminId.ToString());
+        //    if (admin is null || admin.Role != UserRole.Admin)
+        //    {
+        //        _logger.LogWarning("UpdateAdmin failed: {AdminId} not found", adminId);
+        //        return ApiResponse<AdminResponseDto>.Fail("Admin not found.", null, 404);
+        //    }
+
+        //    admin.FullName = dto.FullName;
+        //    admin.Email = dto.Email;
+
+        //    // Going through UserManager keeps NormalizedEmail in sync.
+        //    //var result = await _unitOfWork.CompleteAsync()
+        //    //if (!result.Succeeded)
+        //    //{
+        //    //    var errors = result.Errors.Select(e => e.Description).ToList();
+        //    //    _logger.LogWarning("UpdateAdmin {AdminId} failed: {Errors}", adminId, string.Join("; ", errors));
+        //    //    return ApiResponse<AdminResponseDto>.Fail(errors);
+        //    //}
+        //    await _unitOfWork.CompleteAsync();
+        //    _logger.LogInformation("Admin {AdminId} updated", adminId);
+
+        //    return ApiResponse<AdminResponseDto>.SuccessResponse(new AdminResponseDto
+        //    {
+        //        Id = admin.Id,
+        //        FullName = admin.FullName,
+        //        Email = admin.Email!,
+        //        IsActive = admin.IsActive,
+        //        CreatedAt = admin.CreatedAt
+        //    });
+        //}
 
         public async Task<ApiResponse<bool>> SetAdminToggleActiveStatusAsync(Guid adminId, CancellationToken ct = default)
         {
