@@ -440,7 +440,11 @@ public class ReferralJobService : IReferralJobService
         foreach (var raw in rawPlates)
         {
             var normalized = PlateNormalizer.NormalizeReferralPlate(raw.RawPlate);
-            if (string.IsNullOrWhiteSpace(normalized)) continue;
+            // if (string.IsNullOrWhiteSpace(normalized)) continue;
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length > 30)
+            {
+                continue;
+            }
             distinctPlates.TryAdd(normalized, raw);
         }
 
