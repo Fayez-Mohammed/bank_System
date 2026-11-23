@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Bank.Services.Helpers;
 using Bank.Services.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -202,13 +203,25 @@ Maintain an `active_zone_note` state chronologically as you listen:
 
         var textPayload = ExtractTextPayload(responseJson);
 
-        var raw = JsonSerializer.Deserialize<AiRawResponse>(textPayload, JsonOptions)
-            ?? throw new InvalidOperationException("Failed to deserialize Gemini structured JSON.");
+        AiRawResponse? raw;
+        try
+        {
+            raw = JsonSerializer.Deserialize<AiRawResponse>(textPayload, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Gemini ({Model}) structured JSON could not be read for {FileName}. Payload (first 4000 chars): {Payload}",
+                _model, fileName, textPayload.Length <= 4000 ? textPayload : textPayload[..4000]);
+            throw;
+        }
+
+        if (raw is null)
+            throw new InvalidOperationException("Failed to deserialize Gemini structured JSON.");
 
         var cars = (raw.Cars ?? new List<AiRawCar>())
             .Select(c => new AiCarResult(
                 SanitizePlateNumber(c.PlateNumber),
-                c.TimestampMs,
+                c.TimestampMs ?? c.TimestampStartMs ?? 0,
                 c.TimestampStartMs,
                 c.TimestampEndMs,
                 CleanOptionalText(c.VehicleType, MaxVehicleTypeLength),
@@ -302,15 +315,17 @@ Maintain an `active_zone_note` state chronologically as you listen:
     }
 
     private record AiRawResponse(
-        [property: JsonPropertyName("recording_duration_ms")] int? RecordingDurationMs,
+        [property: JsonPropertyName("recording_duration_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? RecordingDurationMs,
         [property: JsonPropertyName("timestamp_reference")] string? TimestampReference,
         [property: JsonPropertyName("cars")] List<AiRawCar>? Cars);
 
+    // Gemini does not always keep to the INTEGER schema (it can send 12345.0 or "12345"),
+    // so the millisecond fields use a lenient converter instead of failing the whole upload.
     private record AiRawCar(
         [property: JsonPropertyName("plate_number")] string PlateNumber,
-        [property: JsonPropertyName("timestamp_ms")] int TimestampMs,
-        [property: JsonPropertyName("timestamp_start_ms")] int? TimestampStartMs,
-        [property: JsonPropertyName("timestamp_end_ms")] int? TimestampEndMs,
+        [property: JsonPropertyName("timestamp_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampMs,
+        [property: JsonPropertyName("timestamp_start_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampStartMs,
+        [property: JsonPropertyName("timestamp_end_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampEndMs,
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
         [property: JsonPropertyName("notes")] string? Notes);
 }
