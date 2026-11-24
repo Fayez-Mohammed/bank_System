@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -12,9 +13,20 @@ public class AiTranscriptionService : IAiTranscriptionService
     private const int MaxVehicleTypeLength = 100;
     private const int MaxNotesLength = 255;
 
+    // عتبات اكتشاف التوقف المبكر (Premature Stop)
+    private const int MinBytesForDurationCheck = 15_000;
+    private const int MinBytesForMultiPlateCheck = 100_000;
+
+    // المحاولة الأولى بـ 0.0، ولو حصل توقف مبكر بنرفع الـ temperature تدريجياً عشان نكسر مسار التوقف
+    private static readonly double[] RetryTemperatures = [0.0, 0.15, 0.3];
+
     private const string SystemPrompt = """
 You are an expert Arabic speech-to-data extractor for Saudi vehicle license plates recorded in the field (often spoken in Egyptian or Gulf Arabic accent).
-Listen carefully to the entire audio from start to finish and extract EVERY vehicle license plate into the JSON schema.
+
+=== 0. COMPLETENESS RULE (CRITICAL — DO NOT STOP EARLY) ===
+- You MUST listen to the ENTIRE audio recording from 00:00 until the VERY LAST SECOND.
+- NEVER stop after extracting the first plate or the first few plates. Long recordings commonly contain 20 to 80+ license plates.
+- Always calculate and return the real total audio duration in milliseconds in `recording_duration_ms` (NEVER return 0 for a non-empty recording).
 
 === 1. PLATE NUMBER RULES (`plate_number`) ===
 - Strict Format: MUST be EXACTLY 3 Arabic letters followed by EXACTLY 4 Western digits (0-9) with NO spaces (e.g., "دطص6614", "بصه8611", "حاه5719"). NEVER output 2 or 4 letters, and NEVER output 3 digits.
@@ -74,10 +86,68 @@ Maintain an `active_zone_note` state chronologically as you listen:
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
+    private static readonly object ResponseSchema = new
+    {
+        type = "OBJECT",
+        properties = new
+        {
+            recording_duration_ms = new
+            {
+                type = "INTEGER",
+                description = "Exact total audio duration in milliseconds (must be > 0 for non-empty audio)."
+            },
+            timestamp_reference = new
+            {
+                type = "STRING",
+                description = "Always 'recording_start'."
+            },
+            cars = new
+            {
+                type = "ARRAY",
+                description = "Complete chronological list of ALL license plates from the start to the very end of the audio.",
+                items = new
+                {
+                    type = "OBJECT",
+                    properties = new
+                    {
+                        plate_number = new
+                        {
+                            type = "STRING",
+                            description = "Exactly 3 allowed Arabic letters ONLY from [ا،ب،ح،د،ر،س،ص،ط،ع،ق،ك،ل،م،ن،ه،و،ي] (NEVER ج،خ،غ،ف،ث،ض،ت،ش،ز،ذ،ظ،ء) followed by 4 Western digits (0-9) with no spaces."
+                        },
+                        timestamp_ms = new
+                        {
+                            type = "INTEGER",
+                            description = "Approximate timestamp in milliseconds from audio start."
+                        },
+                        timestamp_start_ms = new { type = "INTEGER", nullable = true },
+                        timestamp_end_ms = new { type = "INTEGER", nullable = true },
+                        vehicle_type = new
+                        {
+                            type = "STRING",
+                            nullable = true,
+                            description = "Vehicle category, model, or plate type if spoken (e.g., فان, شاص, وانيت, H1, صني, لوحة صفراء, سطحة). Null if not mentioned."
+                        },
+                        notes = new
+                        {
+                            type = "STRING",
+                            nullable = true,
+                            description = "Location/zone note (including active 'بداية ... انتهت' zone notes like برحة, برحة شمال, جراج يمين) and/or vehicle condition (مركون, متحرك, متغطية, متربة, حادث, مصدومة, محروقة). Null only if neither a zone note nor a plate note applies."
+                        }
+                    },
+                    required = new[] { "plate_number", "timestamp_ms", "vehicle_type", "notes" }
+                }
+            }
+        },
+        required = new[] { "recording_duration_ms", "cars" }
+    };
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<AiTranscriptionService> _logger;
     private readonly string _apiKey;
     private readonly string _model;
+    private readonly int? _thinkingBudget;
+    private readonly string? _thinkingLevel;
 
     public AiTranscriptionService(HttpClient httpClient, IConfiguration configuration, ILogger<AiTranscriptionService> logger)
     {
@@ -85,6 +155,10 @@ Maintain an `active_zone_note` state chronologically as you listen:
         _logger = logger;
         _apiKey = configuration["Gemini:ApiKey"] ?? throw new ArgumentNullException("Gemini:ApiKey is missing in configuration");
         _model = configuration["Gemini:Model"] ?? "gemini-3.5-flash";
+        _thinkingBudget = int.TryParse(configuration["Gemini:ThinkingBudget"], out var budget) && budget >= 0 ? budget : null;
+        _thinkingLevel = string.IsNullOrWhiteSpace(configuration["Gemini:ThinkingLevel"])
+            ? null
+            : configuration["Gemini:ThinkingLevel"]!.Trim().ToLowerInvariant();
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
     }
 
@@ -93,18 +167,135 @@ Maintain an `active_zone_note` state chronologically as you listen:
     {
         using var memoryStream = new MemoryStream();
         await audioStream.CopyToAsync(memoryStream, cancellationToken);
-        var base64Audio = Convert.ToBase64String(memoryStream.ToArray());
-
+        var audioBytes = memoryStream.ToArray();
+        var base64Audio = Convert.ToBase64String(audioBytes);
         var mimeType = ResolveMimeType(fileName, contentType);
+        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent?key={_apiKey}";
 
-        var requestBody = new
+        AttemptResult? bestAttempt = null;
+        Exception? lastException = null;
+
+        for (var attempt = 1; attempt <= RetryTemperatures.Length; attempt++)
+        {
+            var temperature = RetryTemperatures[attempt - 1];
+            var userPrompt = attempt == 1
+                ? "Transcribe and extract ALL license plates, vehicle types, and contextual/zone notes from the start to the very end of this audio recording strictly following the system instructions."
+                : "IMPORTANT RETRY: Listen carefully to the ENTIRE audio recording from 00:00 to the very last second without stopping early. Calculate the exact total `recording_duration_ms` and extract EVERY single license plate, vehicle type, and note mentioned throughout the full audio.";
+
+            var requestBody = BuildRequestBody(mimeType, base64Audio, userPrompt, temperature);
+            using var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+
+            try
+            {
+                using var response = await _httpClient.PostAsync(endpoint, content, cancellationToken);
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError(
+                        "Gemini API Error ({Model}) attempt {Attempt}/{Max}: {StatusCode} - {Body}",
+                        _model, attempt, RetryTemperatures.Length, response.StatusCode, responseJson);
+
+                    if (attempt < RetryTemperatures.Length && IsTransientStatus(response.StatusCode))
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(attempt * 2), cancellationToken);
+                        continue;
+                    }
+
+                    response.EnsureSuccessStatusCode();
+                }
+
+                var parsed = ParseGeminiResponse(responseJson);
+                var raw = JsonSerializer.Deserialize<AiRawResponse>(parsed.TextPayload, JsonOptions)
+                    ?? throw new InvalidOperationException("Failed to deserialize Gemini structured JSON.");
+
+                var cars = (raw.Cars ?? new List<AiRawCar>())
+                    .Select(c => new AiCarResult(
+                        SanitizePlateNumber(c.PlateNumber),
+                        c.TimestampMs,
+                        c.TimestampStartMs,
+                        c.TimestampEndMs,
+                        CleanOptionalText(c.VehicleType, MaxVehicleTypeLength),
+                        CleanOptionalText(c.Notes, MaxNotesLength)))
+                    .Where(c => !string.IsNullOrWhiteSpace(c.PlateNumber))
+                    .ToList();
+
+                var current = new AttemptResult(
+                    raw.RecordingDurationMs ?? 0,
+                    raw.TimestampReference ?? "recording_start",
+                    cars,
+                    parsed.FinishReason,
+                    parsed.Usage);
+
+                if (IsBetterAttempt(current, bestAttempt))
+                    bestAttempt = current;
+
+                var suspiciousReason = GetSuspiciousReason(current, audioBytes.Length);
+                if (suspiciousReason is null)
+                {
+                    LogSuccess(fileName, audioBytes.Length, attempt, current);
+                    return new AiTranscriptionResult(current.DurationMs, current.TimestampReference, current.Cars);
+                }
+
+                _logger.LogWarning(
+                    "Gemini ({Model}) attempt {Attempt}/{Max} returned suspicious result for {FileName} ({AudioBytes} bytes): {Reason} | plates={Count}, duration={DurationMs}ms, finishReason={FinishReason}, tokens(in={In}, out={Out}, think={Think})",
+                    _model, attempt, RetryTemperatures.Length, fileName, audioBytes.Length, suspiciousReason,
+                    current.Cars.Count, current.DurationMs, current.FinishReason,
+                    current.Usage.PromptTokens, current.Usage.OutputTokens, current.Usage.ThoughtsTokens);
+
+                if (attempt < RetryTemperatures.Length)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && attempt < RetryTemperatures.Length)
+            {
+                lastException = ex;
+                _logger.LogWarning(
+                    ex, "Gemini ({Model}) attempt {Attempt}/{Max} failed for {FileName}; retrying...",
+                    _model, attempt, RetryTemperatures.Length, fileName);
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), cancellationToken);
+            }
+        }
+
+        if (bestAttempt is not null)
+        {
+            _logger.LogWarning(
+                "Gemini ({Model}) exhausted {Max} attempts for {FileName}; returning best result: {Count} plates ({WithType} with type, {WithNotes} with notes), duration={DurationMs}ms, finishReason={FinishReason}, tokens(in={In}, out={Out}, think={Think})",
+                _model, RetryTemperatures.Length, fileName,
+                bestAttempt.Cars.Count, bestAttempt.Cars.Count(c => c.VehicleType != null), bestAttempt.Cars.Count(c => c.Notes != null),
+                bestAttempt.DurationMs, bestAttempt.FinishReason,
+                bestAttempt.Usage.PromptTokens, bestAttempt.Usage.OutputTokens, bestAttempt.Usage.ThoughtsTokens);
+
+            return new AiTranscriptionResult(bestAttempt.DurationMs, bestAttempt.TimestampReference, bestAttempt.Cars);
+        }
+
+        throw lastException ?? new InvalidOperationException("Gemini transcription failed after all retry attempts.");
+    }
+
+    private object BuildRequestBody(string mimeType, string base64Audio, string userPrompt, double temperature)
+    {
+        var generationConfig = new Dictionary<string, object>
+        {
+            ["response_mime_type"] = "application/json",
+            ["temperature"] = temperature,
+            ["response_schema"] = ResponseSchema
+        };
+
+        if (_thinkingBudget.HasValue)
+        {
+            generationConfig["thinking_config"] = new { thinking_budget = _thinkingBudget.Value };
+        }
+        else if (_thinkingLevel is not null)
+        {
+            generationConfig["thinking_config"] = new { thinking_level = _thinkingLevel };
+        }
+
+        return new
         {
             system_instruction = new
             {
-                parts = new[]
-                {
-                    new { text = SystemPrompt }
-                }
+                parts = new[] { new { text = SystemPrompt } }
             },
             contents = new[]
             {
@@ -120,131 +311,114 @@ Maintain an `active_zone_note` state chronologically as you listen:
                                 data = base64Audio
                             }
                         },
-                        new
-                        {
-                            text = "Transcribe and extract all license plates, vehicle types, and contextual/zone notes from this audio recording strictly following the system instructions."
-                        }
+                        new { text = userPrompt }
                     }
                 }
             },
-            generationConfig = new
-            {
-                response_mime_type = "application/json",
-                temperature = 0.0,
-                response_schema = new
-                {
-                    type = "OBJECT",
-                    properties = new
-                    {
-                        recording_duration_ms = new
-                        {
-                            type = "INTEGER",
-                            description = "Total audio duration in milliseconds."
-                        },
-                        timestamp_reference = new
-                        {
-                            type = "STRING",
-                            description = "Always 'recording_start'."
-                        },
-                        cars = new
-                        {
-                            type = "ARRAY",
-                            items = new
-                            {
-                                type = "OBJECT",
-                                properties = new
-                                {
-                                    plate_number = new
-                                    {
-                                        type = "STRING",
-                                        description = "Exactly 3 allowed Arabic letters ONLY from [ا،ب،ح،د،ر،س،ص،ط،ع،ق،ك،ل،م،ن،ه،و،ي] (NEVER ج،خ،غ،ف،ث،ض،ت،ش،ز،ذ،ظ،ء) followed by 4 Western digits (0-9) with no spaces."
-                                    },
-                                    timestamp_ms = new
-                                    {
-                                        type = "INTEGER",
-                                        description = "Approximate timestamp in milliseconds from audio start."
-                                    },
-                                    timestamp_start_ms = new { type = "INTEGER", nullable = true },
-                                    timestamp_end_ms = new { type = "INTEGER", nullable = true },
-                                    vehicle_type = new
-                                    {
-                                        type = "STRING",
-                                        nullable = true,
-                                        description = "Vehicle category, model, or plate type if spoken (e.g., فان, شاص, وانيت, H1, صني, لوحة صفراء, سطحة). Null if not mentioned."
-                                    },
-                                    notes = new
-                                    {
-                                        type = "STRING",
-                                        nullable = true,
-                                        description = "Location/zone note (including active 'بداية ... انتهت' zone notes like برحة, برحة شمال, جراج يمين) and/or vehicle condition (مركون, متحرك, متغطية, متربة, حادث, مصدومة, محروقة). Null only if neither a zone note nor a plate note applies."
-                                    }
-                                },
-                                required = new[] { "plate_number", "timestamp_ms", "vehicle_type", "notes" }
-                            }
-                        }
-                    },
-                    required = new[] { "cars" }
-                }
-            }
+            generationConfig
         };
-
-        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent?key={_apiKey}";
-        using var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-
-        using var response = await _httpClient.PostAsync(endpoint, content, cancellationToken);
-        var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError("Gemini API Error ({Model}): {StatusCode} - {Body}", _model, response.StatusCode, responseJson);
-            response.EnsureSuccessStatusCode();
-        }
-
-        var textPayload = ExtractTextPayload(responseJson);
-
-        var raw = JsonSerializer.Deserialize<AiRawResponse>(textPayload, JsonOptions)
-            ?? throw new InvalidOperationException("Failed to deserialize Gemini structured JSON.");
-
-        var cars = (raw.Cars ?? new List<AiRawCar>())
-            .Select(c => new AiCarResult(
-                SanitizePlateNumber(c.PlateNumber),
-                c.TimestampMs,
-                c.TimestampStartMs,
-                c.TimestampEndMs,
-                CleanOptionalText(c.VehicleType, MaxVehicleTypeLength),
-                CleanOptionalText(c.Notes, MaxNotesLength)))
-            .Where(c => !string.IsNullOrWhiteSpace(c.PlateNumber))
-            .ToList();
-
-        var durationMs = raw.RecordingDurationMs ?? 0;
-
-        _logger.LogInformation(
-            "Gemini ({Model}) transcription returned {Count} plates ({WithType} with type, {WithNotes} with notes) for {FileName} (duration {DurationMs}ms)",
-            _model, cars.Count, cars.Count(c => c.VehicleType != null), cars.Count(c => c.Notes != null), fileName, durationMs);
-
-        return new AiTranscriptionResult(durationMs, raw.TimestampReference ?? "recording_start", cars);
     }
 
-    private string ExtractTextPayload(string responseJson)
+    private ParsedGeminiResponse ParseGeminiResponse(string responseJson)
     {
         using var doc = JsonDocument.Parse(responseJson);
+        var root = doc.RootElement;
 
-        if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
+        var usage = ExtractUsage(root);
+        string? finishReason = null;
+
+        if (root.TryGetProperty("candidates", out var candidates) &&
             candidates.ValueKind == JsonValueKind.Array &&
-            candidates.GetArrayLength() > 0 &&
-            candidates[0].TryGetProperty("content", out var content) &&
-            content.TryGetProperty("parts", out var parts) &&
-            parts.ValueKind == JsonValueKind.Array &&
-            parts.GetArrayLength() > 0 &&
-            parts[0].TryGetProperty("text", out var textElement))
+            candidates.GetArrayLength() > 0)
         {
-            var payload = textElement.GetString();
-            if (!string.IsNullOrWhiteSpace(payload))
-                return payload;
+            var firstCandidate = candidates[0];
+            if (firstCandidate.TryGetProperty("finishReason", out var frElement))
+                finishReason = frElement.GetString();
+
+            if (firstCandidate.TryGetProperty("content", out var content) &&
+                content.TryGetProperty("parts", out var parts) &&
+                parts.ValueKind == JsonValueKind.Array &&
+                parts.GetArrayLength() > 0 &&
+                parts[0].TryGetProperty("text", out var textElement))
+            {
+                var payload = textElement.GetString();
+                if (!string.IsNullOrWhiteSpace(payload))
+                    return new ParsedGeminiResponse(payload, finishReason, usage);
+            }
         }
 
-        _logger.LogError("Gemini ({Model}) returned an unexpected/empty response: {Body}", _model, responseJson);
-        throw new InvalidOperationException("Gemini returned an empty or blocked response.");
+        _logger.LogError(
+            "Gemini ({Model}) returned unexpected/empty response (finishReason={FinishReason}): {Body}",
+            _model, finishReason ?? "unknown", responseJson);
+        throw new InvalidOperationException($"Gemini returned an empty or blocked response (finishReason={finishReason ?? "unknown"}).");
+    }
+
+    private static TokenUsage ExtractUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usageMetadata", out var meta) || meta.ValueKind != JsonValueKind.Object)
+            return new TokenUsage(0, 0, 0, 0);
+
+        static int ReadInt(JsonElement obj, string prop) =>
+            obj.TryGetProperty(prop, out var el) && el.TryGetInt32(out var val) ? val : 0;
+
+        return new TokenUsage(
+            ReadInt(meta, "promptTokenCount"),
+            ReadInt(meta, "candidatesTokenCount"),
+            ReadInt(meta, "thoughtsTokenCount"),
+            ReadInt(meta, "totalTokenCount"));
+    }
+
+    private static string? GetSuspiciousReason(AttemptResult result, int audioByteLength)
+    {
+        if (!string.IsNullOrEmpty(result.FinishReason) &&
+            !string.Equals(result.FinishReason, "STOP", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"finishReason is '{result.FinishReason}'";
+        }
+
+        if (result.DurationMs <= 0 && audioByteLength >= MinBytesForDurationCheck)
+        {
+            return "recording_duration_ms is 0 for non-trivial audio";
+        }
+
+        if (result.Cars.Count <= 1 && (audioByteLength >= MinBytesForMultiPlateCheck || result.DurationMs >= 30_000))
+        {
+            return $"only {result.Cars.Count} plate(s) extracted from long audio";
+        }
+
+        return null;
+    }
+
+    private static bool IsBetterAttempt(AttemptResult candidate, AttemptResult? currentBest)
+    {
+        if (currentBest is null) return true;
+        if (candidate.Cars.Count != currentBest.Cars.Count)
+            return candidate.Cars.Count > currentBest.Cars.Count;
+        if (candidate.DurationMs != currentBest.DurationMs)
+            return candidate.DurationMs > currentBest.DurationMs;
+
+        var candidateStoppedCleanly = string.Equals(candidate.FinishReason, "STOP", StringComparison.OrdinalIgnoreCase);
+        var bestStoppedCleanly = string.Equals(currentBest.FinishReason, "STOP", StringComparison.OrdinalIgnoreCase);
+        return candidateStoppedCleanly && !bestStoppedCleanly;
+    }
+
+    private static bool IsTransientStatus(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.TooManyRequests
+            or HttpStatusCode.RequestTimeout
+            or HttpStatusCode.InternalServerError
+            or HttpStatusCode.BadGateway
+            or HttpStatusCode.ServiceUnavailable
+            or HttpStatusCode.GatewayTimeout;
+
+    private void LogSuccess(string fileName, int audioBytes, int attempt, AttemptResult result)
+    {
+        _logger.LogInformation(
+            "Gemini ({Model}) attempt {Attempt} returned {Count} plates ({WithType} with type, {WithNotes} with notes) for {FileName} ({AudioBytes} bytes, duration {DurationMs}ms, finishReason={FinishReason}, tokens: in={In}, out={Out}, think={Think}, total={Total})",
+            _model, attempt, result.Cars.Count,
+            result.Cars.Count(c => c.VehicleType != null),
+            result.Cars.Count(c => c.Notes != null),
+            fileName, audioBytes, result.DurationMs, result.FinishReason ?? "unknown",
+            result.Usage.PromptTokens, result.Usage.OutputTokens, result.Usage.ThoughtsTokens, result.Usage.TotalTokens);
     }
 
     private static string ResolveMimeType(string fileName, string contentType)
@@ -300,6 +474,17 @@ Maintain an `active_zone_note` state chronologically as you listen:
 
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
+
+    private sealed record TokenUsage(int PromptTokens, int OutputTokens, int ThoughtsTokens, int TotalTokens);
+
+    private sealed record ParsedGeminiResponse(string TextPayload, string? FinishReason, TokenUsage Usage);
+
+    private sealed record AttemptResult(
+        int DurationMs,
+        string TimestampReference,
+        List<AiCarResult> Cars,
+        string? FinishReason,
+        TokenUsage Usage);
 
     private record AiRawResponse(
         [property: JsonPropertyName("recording_duration_ms")] int? RecordingDurationMs,
