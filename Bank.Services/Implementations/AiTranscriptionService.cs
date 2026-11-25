@@ -119,10 +119,8 @@ Maintain an `active_zone_note` state chronologically as you listen:
                         timestamp_ms = new
                         {
                             type = "INTEGER",
-                            description = "Approximate timestamp in milliseconds from audio start."
+                            description = "Midpoint (average of start and end) timestamp in milliseconds from audio start when the plate is spoken."
                         },
-                        timestamp_start_ms = new { type = "INTEGER", nullable = true },
-                        timestamp_end_ms = new { type = "INTEGER", nullable = true },
                         vehicle_type = new
                         {
                             type = "STRING",
@@ -229,9 +227,9 @@ Maintain an `active_zone_note` state chronologically as you listen:
                 var cars = (raw.Cars ?? new List<AiRawCar>())
                     .Select(c => new AiCarResult(
                         SanitizePlateNumber(c.PlateNumber),
-                        c.TimestampMs ?? c.TimestampStartMs ?? 0,
-                        c.TimestampStartMs,
-                        c.TimestampEndMs,
+                        c.TimestampMs ?? 0,
+                        null,
+                        null,
                         CleanOptionalText(c.VehicleType, MaxVehicleTypeLength),
                         CleanOptionalText(c.Notes, MaxNotesLength)))
                     .Where(c => !string.IsNullOrWhiteSpace(c.PlateNumber))
@@ -513,8 +511,6 @@ Maintain an `active_zone_note` state chronologically as you listen:
     private record AiRawCar(
         [property: JsonPropertyName("plate_number")] string PlateNumber,
         [property: JsonPropertyName("timestamp_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampMs,
-        [property: JsonPropertyName("timestamp_start_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampStartMs,
-        [property: JsonPropertyName("timestamp_end_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampEndMs,
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
         [property: JsonPropertyName("notes")] string? Notes);
 }
