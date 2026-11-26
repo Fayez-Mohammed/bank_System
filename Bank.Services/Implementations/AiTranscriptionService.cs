@@ -116,10 +116,10 @@ Maintain an `active_zone_note` state chronologically as you listen:
                             type = "STRING",
                             description = "Exactly 3 allowed Arabic letters ONLY from [ا،ب،ح،د،ر،س،ص،ط،ع،ق،ك،ل،م،ن،ه،و،ي] (NEVER ج،خ،غ،ف،ث،ض،ت،ش،ز،ذ،ظ،ء) followed by 4 Western digits (0-9) with no spaces."
                         },
-                        timestamp_ms = new
+                        timestamp = new
                         {
-                            type = "INTEGER",
-                            description = "Midpoint (average of start and end) timestamp in milliseconds from audio start when the plate is spoken."
+                            type = "STRING",
+                            description = "Spoken plate midpoint time in MM:SS format from audio start (e.g., '00:04', '03:05', '04:49')."
                         },
                         vehicle_type = new
                         {
@@ -134,7 +134,7 @@ Maintain an `active_zone_note` state chronologically as you listen:
                             description = "Location/zone note (including active 'بداية ... انتهت' zone notes like برحة, برحة شمال, جراج يمين) and/or vehicle condition (مركون, متحرك, متغطية, متربة, حادث, مصدومة, محروقة). Null only if neither a zone note nor a plate note applies."
                         }
                     },
-                    required = new[] { "plate_number", "timestamp_ms", "vehicle_type", "notes" }
+                    required = new[] { "plate_number", "timestamp", "vehicle_type", "notes" }
                 }
             }
         },
@@ -230,7 +230,7 @@ Maintain an `active_zone_note` state chronologically as you listen:
                 var cars = (raw.Cars ?? new List<AiRawCar>())
                     .Select(c => new AiCarResult(
                         SanitizePlateNumber(c.PlateNumber),
-                        c.TimestampMs ?? 0,
+                        ParseTimestampToMs(c.Timestamp),
                         null,
                         null,
                         CleanOptionalText(c.VehicleType, MaxVehicleTypeLength),
@@ -493,6 +493,37 @@ Maintain an `active_zone_note` state chronologically as you listen:
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
+    private static int ParseTimestampToMs(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+
+        var trimmed = value.Trim();
+        var parts = trimmed.Split(':');
+
+        // صيغة MM:SS أو MM:SS.fff
+        if (parts.Length == 2 &&
+            int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var minutes) &&
+            double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            return Math.Max(0, (int)Math.Round((minutes * 60 + seconds) * 1000));
+        }
+
+        // صيغة HH:MM:SS احتياطيًا للتسجيلات الطويلة
+        if (parts.Length == 3 &&
+            int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var hours) &&
+            int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var mins) &&
+            double.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs))
+        {
+            return Math.Max(0, (int)Math.Round((hours * 3600 + mins * 60 + secs) * 1000));
+        }
+
+        // Fallback لو الموديل رجّع رقم مباشر لأي سبب
+        if (double.TryParse(trimmed, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var raw))
+            return Math.Max(0, (int)Math.Round(raw));
+
+        return 0;
+    }
+
     private sealed record TokenUsage(int PromptTokens, int OutputTokens, int ThoughtsTokens, int TotalTokens);
 
     private sealed record ParsedGeminiResponse(string TextPayload, string? FinishReason, TokenUsage Usage);
@@ -513,7 +544,7 @@ Maintain an `active_zone_note` state chronologically as you listen:
     // so the millisecond fields use a lenient converter instead of failing the whole upload.
     private record AiRawCar(
         [property: JsonPropertyName("plate_number")] string PlateNumber,
-        [property: JsonPropertyName("timestamp_ms"), JsonConverter(typeof(LenientMillisecondsConverter))] int? TimestampMs,
+        [property: JsonPropertyName("timestamp")] string? Timestamp,
         [property: JsonPropertyName("vehicle_type")] string? VehicleType,
         [property: JsonPropertyName("notes")] string? Notes);
 }
