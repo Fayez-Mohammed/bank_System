@@ -8,6 +8,7 @@ using Bank.Shared.DTOs;
 using Bank.Shared.DTOs.LiveCheckDTOs;
 using Bank.Shared.Enums;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -15,6 +16,8 @@ namespace Bank.Services.Implementations;
 
 public class LiveCheckSessionService : ILiveCheckSessionService
 {
+    private const string NoCheckPermissionMessage = "ليس لديك صلاحية التشييك.";
+
     private readonly ILogger<LiveCheckSessionService> _logger;
     private readonly IUnitOfWork _unit;
     private readonly AppDbContext _dbContext;
@@ -201,6 +204,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     public async Task<(CheckSession Session, Guid? CheckFileId)> CreateSessionAsync(
         Guid userId, string? recorderName, string? district, string? street, string? excelSheetName, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanCheckAsync(userId, cancellationToken))
+            throw new UnauthorizedAccessException(NoCheckPermissionMessage);
+
         // اسم المسجل والحي والشارع اختياريين في التشييك — الفاضي بيتخزن null.
         recorderName = string.IsNullOrWhiteSpace(recorderName) ? null : recorderName.Trim();
         district = string.IsNullOrWhiteSpace(district) ? null : district.Trim();
@@ -626,6 +632,9 @@ public class LiveCheckSessionService : ILiveCheckSessionService
     public async Task<ApiResponse<ManualLiveCheckResultDto>> CreateManualCheckAsync(
         Guid userId, CreateManualLiveCheckRequestDto request, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanCheckAsync(userId, cancellationToken))
+            return ApiResponse<ManualLiveCheckResultDto>.Fail(NoCheckPermissionMessage, null, StatusCodes.Status403Forbidden);
+
         if (string.IsNullOrWhiteSpace(request.PlateNumber))
         {
             return ApiResponse<ManualLiveCheckResultDto>.Fail("رقم اللوحة مطلوب.", null, 400);

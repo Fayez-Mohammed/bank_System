@@ -23,6 +23,7 @@ public class LiveCheckHub : Hub
     private readonly ILiveCheckSessionService _sessionService;
     private readonly ILiveCheckAiConnector _aiConnector;
     private readonly ILiveCheckConnectionManager _connections;
+    private readonly IPermissionService _permissions;
     private readonly IHubContext<LiveCheckHub> _hubContext;
     private readonly ILogger<LiveCheckHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -31,21 +32,34 @@ public class LiveCheckHub : Hub
 
     public LiveCheckHub(
         ILiveCheckSessionService sessionService, ILiveCheckAiConnector aiConnector,
-        ILiveCheckConnectionManager connections, IHubContext<LiveCheckHub> hubContext, ILogger<LiveCheckHub> logger,
+        ILiveCheckConnectionManager connections, IPermissionService permissions,
+        IHubContext<LiveCheckHub> hubContext, ILogger<LiveCheckHub> logger,
         IServiceScopeFactory scopeFactory)
     {
         _sessionService = sessionService;
         _aiConnector = aiConnector;
         _connections = connections;
+        _permissions = permissions;
         _hubContext = hubContext;
         _logger = logger;
         _scopeFactory = scopeFactory;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        if (!await _permissions.CanCheckAsync(GetUserId(), Context.ConnectionAborted))
+            throw new HubException("ليس لديك صلاحية التشييك.");
+
+        await base.OnConnectedAsync();
     }
 
     // اسم المسجل والحي والشارع اختياريين — الموبايل يقدر يبعت null أو "".
     public async Task StartSession(string? recorderName, string? district, string? street, string? excelSheetName)
     {
         var userId = GetUserId();
+        if (!await _permissions.CanCheckAsync(userId, Context.ConnectionAborted))
+            throw new HubException("ليس لديك صلاحية التشييك.");
+
         Guid? createdSessionId = null;
         try
         {

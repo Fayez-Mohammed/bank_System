@@ -43,6 +43,8 @@ namespace Bank.Shared.DTOs.AdminDTOs
         public bool CanManageCheckFiles { get; set; }
         public bool CanUploadDataFiles { get; set; }
         public bool CanSort { get; set; }
+        public bool CanRecord { get; set; } = true;
+        public bool CanCheck { get; set; } = true;
         public List<Guid> SortableDataFileIds { get; set; } = new();
     }
 }

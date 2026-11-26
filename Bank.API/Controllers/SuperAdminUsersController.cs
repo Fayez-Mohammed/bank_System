@@ -34,6 +34,16 @@ public class SuperAdminUsersController : ControllerBase
         var result = await _superAdminService.SetUserSubscriptionAsync(id, dto, cancellationToken);
         return StatusCode(result.StatusCode, result);
     }
+
+    /// <summary>Enables or disables recording and checking features for a user.</summary>
+    [HttpPatch("{id:guid}/features")]
+    [ProducesResponseType(typeof(ApiResponse<UpdateUserFeaturesDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateUserFeatures(Guid id, [FromBody] UpdateUserFeaturesDto dto, CancellationToken cancellationToken)
+    {
+        var result = await _superAdminService.UpdateUserFeaturesAsync(id, dto, cancellationToken);
+        return StatusCode(result.StatusCode, result);
+    }
     [HttpPost("{id:guid}/reset-device")]
     [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

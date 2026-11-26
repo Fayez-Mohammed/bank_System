@@ -10,6 +10,8 @@ public class ApplicationUser : IdentityUser<Guid>
     public string FullName { get; set; } = null!;
     public UserRole Role { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool CanRecord { get; set; } = true;
+    public bool CanCheck { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string? BoundDeviceHash { get; set; }
     public string? BoundDeviceName { get; set; }

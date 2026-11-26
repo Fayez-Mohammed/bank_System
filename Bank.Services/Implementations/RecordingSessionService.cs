@@ -28,6 +28,8 @@ public class RecordingSessionService : IRecordingSessionService
 {
     private const long MaxAudioSizeBytes = 50L * 1024 * 1024;
     private static readonly string[] AllowedAudioExtensions = { ".aac", ".m4a", ".mp3", ".wav", ".ogg" };
+    private const string NoRecordPermissionMessage = "ليس لديك صلاحية التسجيل.";
+    private const string NoCheckPermissionMessage = "ليس لديك صلاحية التشييك.";
 
     private readonly ILogger<RecordingSessionService> _logger;
     private readonly IUnitOfWork _unit;
@@ -71,6 +73,9 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<CreateRecordingSessionResponseDto>> CreateAsync(
         Guid userId, CreateRecordingSessionRequestDto request, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanRecordAsync(userId, cancellationToken))
+            return ApiResponse<CreateRecordingSessionResponseDto>.Fail(NoRecordPermissionMessage, null, StatusCodes.Status403Forbidden);
+
         var userScope = await ResolveUserScopeAsync(userId, cancellationToken);
         if (userScope is null) return ApiResponse<CreateRecordingSessionResponseDto>.Fail("المستخدم غير موجود.");
 
@@ -157,6 +162,9 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<bool>> CompleteAsync(
         Guid sessionId, Guid currentUserId, IFormFile audioFile, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanRecordAsync(currentUserId, cancellationToken))
+            return ApiResponse<bool>.Fail(NoRecordPermissionMessage, null, StatusCodes.Status403Forbidden);
+
         if (audioFile is null || audioFile.Length == 0) return ApiResponse<bool>.Fail("لازم ترفع الملف الصوتي.", null, 400);
         if (audioFile.Length > MaxAudioSizeBytes) return ApiResponse<bool>.Fail("حجم الملف الصوتي أكبر من الحد المسموح.", null, 400);
 
@@ -186,6 +194,9 @@ public class RecordingSessionService : IRecordingSessionService
 
     public async Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanRecordAsync(currentUserId, cancellationToken))
+            return ApiResponse<bool>.Fail(NoRecordPermissionMessage, null, StatusCodes.Status403Forbidden);
+
         var session = await _dbContext.RecordingSessions
             .AsNoTracking()
             .Where(ScopeFilter(currentUserId, sessionId))
@@ -570,6 +581,9 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<ManualCheckResultDto>> CreateManualCheckAsync(
         Guid userId, CreateManualCheckRequestDto request, CancellationToken cancellationToken = default)
     {
+        if (!await _permissions.CanCheckAsync(userId, cancellationToken))
+            return ApiResponse<ManualCheckResultDto>.Fail(NoCheckPermissionMessage, null, StatusCodes.Status403Forbidden);
+
         if (string.IsNullOrWhiteSpace(request.PlateNumber))
         {
             return ApiResponse<ManualCheckResultDto>.Fail("رقم اللوحة مطلوب.", null, 400);

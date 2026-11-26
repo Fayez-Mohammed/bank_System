@@ -66,6 +66,8 @@ namespace Bank.Shared.DTOs.SuperAdminDTOs
         //public string Username { get; set; } = null!;
         public string Email { get; set; } = null!;
         public bool IsActive { get; set; }
+        public bool CanRecord { get; set; } = true;
+        public bool CanCheck { get; set; } = true;
         public DateTime CreatedAt { get; set; }
         public Guid? GroupId { get; set; }
         public string? GroupName { get; set; }

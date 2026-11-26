@@ -32,6 +32,16 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(x => x.CanRecord)
+            .HasColumnName("can_record")
+            .HasDefaultValue(true)
+            .IsRequired();
+
+        builder.Property(x => x.CanCheck)
+            .HasColumnName("can_check")
+            .HasDefaultValue(true)
+            .IsRequired();
+
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
             .HasDefaultValueSql("now()")

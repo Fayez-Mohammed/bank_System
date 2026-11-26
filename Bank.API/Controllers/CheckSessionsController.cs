@@ -49,10 +49,11 @@ public class CheckSessionsController : ControllerBase
     [HttpPost("manual-check")]
     [ProducesResponseType(typeof(ApiResponse<ManualLiveCheckResultDto>), 200)]
     [ProducesResponseType(typeof(ApiResponse<object>), 400)]
+    [ProducesResponseType(typeof(ApiResponse<object>), 403)]
     public async Task<IActionResult> CreateManualCheck([FromBody] CreateManualLiveCheckRequestDto request, CancellationToken cancellationToken)
     {
         var result = await _service.CreateManualCheckAsync(CurrentUserId, request, cancellationToken);
-        return result.Success ? Ok(result) : BadRequest(result);
+        return StatusCode(result.StatusCode, result);
     }
 
     [HttpGet]

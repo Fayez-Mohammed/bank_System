@@ -72,10 +72,25 @@ public class PermissionService : IPermissionService
         return hasAnyFile ? null : "مفيش أي ملف داتا مسموحلك تفرز عليه. اطلب من الأدمن يحددلك ملفات الفرز.";
     }
 
+    public async Task<bool> CanRecordAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var access = await GetAccessAsync(userId, cancellationToken);
+        return access is not null && (access.Role == UserRole.SuperAdmin || access.CanRecord);
+    }
+
+    public async Task<bool> CanCheckAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var access = await GetAccessAsync(userId, cancellationToken);
+        return access is not null && (access.Role == UserRole.SuperAdmin || access.CanCheck);
+    }
+
     public async Task<MyPermissionsDto?> GetMyPermissionsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var access = await GetAccessAsync(userId, cancellationToken);
         if (access is null) return null;
+
+        var canRecord = access.Role == UserRole.SuperAdmin || access.CanRecord;
+        var canCheck = access.Role == UserRole.SuperAdmin || access.CanCheck;
 
         if (access.Role != UserRole.User)
         {
@@ -84,7 +99,9 @@ public class PermissionService : IPermissionService
                 Role = access.Role.ToString(),
                 CanManageCheckFiles = true,
                 CanUploadDataFiles = true,
-                CanSort = true
+                CanSort = true,
+                CanRecord = canRecord,
+                CanCheck = canCheck
             };
         }
 
@@ -102,6 +119,8 @@ public class PermissionService : IPermissionService
             CanManageCheckFiles = access.CanManageCheckFiles,
             CanUploadDataFiles = access.CanUploadDataFiles,
             CanSort = access.CanSort,
+            CanRecord = canRecord,
+            CanCheck = canCheck,
             SortableDataFileIds = sortableIds
         };
     }
@@ -117,11 +136,14 @@ public class PermissionService : IPermissionService
                 x.GroupId,
                 x.User.UserPermission != null && x.User.UserPermission.CanManageCheckFiles,
                 x.User.UserPermission != null && x.User.UserPermission.CanUploadDataFiles,
-                x.User.UserPermission != null && x.User.UserPermission.CanSort))
+                x.User.UserPermission != null && x.User.UserPermission.CanSort,
+                x.User.CanRecord,
+                x.User.CanCheck))
             .FirstOrDefaultAsync(cancellationToken);
     }
 
     private record UserAccess(
         UserRole Role, Guid? GroupId,
-        bool CanManageCheckFiles, bool CanUploadDataFiles, bool CanSort);
+        bool CanManageCheckFiles, bool CanUploadDataFiles, bool CanSort,
+        bool CanRecord, bool CanCheck);
 }

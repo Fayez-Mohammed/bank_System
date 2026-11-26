@@ -46,6 +46,18 @@ namespace Bank.DAL.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("bound_device_name");
 
+                    b.Property<bool>("CanCheck")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("can_check");
+
+                    b.Property<bool>("CanRecord")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("can_record");
+
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");

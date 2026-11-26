@@ -88,6 +88,25 @@ namespace Bank.Services.Implementations
             return ApiResponse<DateTime?>.SuccessResponse(newExpiry, "تم تحديث الاشتراك.");
         }
 
+        public async Task<ApiResponse<UpdateUserFeaturesDto>> UpdateUserFeaturesAsync(
+            Guid userId, UpdateUserFeaturesDto dto, CancellationToken ct = default)
+        {
+            var updated = await _context.Users
+                .Where(u => u.Id == userId && u.Role != UserRole.SuperAdmin)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.CanRecord, dto.CanRecord)
+                    .SetProperty(u => u.CanCheck, dto.CanCheck), ct);
+
+            if (updated == 0)
+                return ApiResponse<UpdateUserFeaturesDto>.Fail("المستخدم غير موجود.", null, 404);
+
+            _logger.LogInformation(
+                "SuperAdmin updated features for User {UserId}: CanRecord={CanRecord}, CanCheck={CanCheck}",
+                userId, dto.CanRecord, dto.CanCheck);
+
+            return ApiResponse<UpdateUserFeaturesDto>.SuccessResponse(dto, "تم تحديث صلاحيات التسجيل والتشييك.");
+        }
+
         public async Task<ApiResponse<long?>> SetGroupDataRowLimitAsync(
             Guid groupId, SetDataRowLimitDto dto, CancellationToken ct = default)
         {
@@ -300,6 +319,8 @@ namespace Bank.Services.Implementations
                 FullName = admin.FullName,
                 Email = admin.Email!,
                 IsActive = admin.IsActive,
+                CanRecord = admin.CanRecord,
+                CanCheck = admin.CanCheck,
                 CreatedAt = admin.CreatedAt
             });
         }
@@ -334,6 +355,8 @@ namespace Bank.Services.Implementations
                     FullName = u.FullName,
                     Email = u.Email!,
                     IsActive = u.IsActive,
+                    CanRecord = u.CanRecord,
+                    CanCheck = u.CanCheck,
                     CreatedAt = u.CreatedAt,
                     SubscriptionExpiresAt = u.SubscriptionExpiresAt,
                     AdministeredGroupId = u.AdministeredGroup != null ? u.AdministeredGroup.Id : (Guid?)null,
@@ -361,6 +384,8 @@ namespace Bank.Services.Implementations
                     FullName = u.FullName,
                     Email = u.Email!,
                     IsActive = u.IsActive,
+                    CanRecord = u.CanRecord,
+                    CanCheck = u.CanCheck,
                     CreatedAt = u.CreatedAt,
                     AdministeredGroupId = u.AdministeredGroup != null ? u.AdministeredGroup.Id : (Guid?)null,
                     AdministeredGroupName = u.AdministeredGroup != null ? u.AdministeredGroup.Name : null
@@ -416,6 +441,8 @@ namespace Bank.Services.Implementations
                 FullName = admin.FullName,
                 Email = admin.Email!,
                 IsActive = admin.IsActive,
+                CanRecord = admin.CanRecord,
+                CanCheck = admin.CanCheck,
                 CreatedAt = admin.CreatedAt
             }, passwordChanged ? "تم التحديث وتغيير الباسورد." : null);
         }
@@ -718,6 +745,8 @@ namespace Bank.Services.Implementations
                 FullName = user.FullName,
                 Email = user.Email!,
                 IsActive = user.IsActive,
+                CanRecord = user.CanRecord,
+                CanCheck = user.CanCheck,
                 CreatedAt = user.CreatedAt,
                 GroupId = user.GroupId,
                 GroupName = groupName,
@@ -757,6 +786,8 @@ namespace Bank.Services.Implementations
                     FullName = u.FullName,
                     Email = u.Email!,
                     IsActive = u.IsActive,
+                    CanRecord = u.CanRecord,
+                    CanCheck = u.CanCheck,
                     CreatedAt = u.CreatedAt,
                     GroupId = u.GroupId,
                     GroupName = u.Group != null ? u.Group.Name : null,
@@ -794,6 +825,8 @@ namespace Bank.Services.Implementations
                     FullName = u.FullName,
                     Email = u.Email!,
                     IsActive = u.IsActive,
+                    CanRecord = u.CanRecord,
+                    CanCheck = u.CanCheck,
                     CreatedAt = u.CreatedAt,
                     GroupId = u.GroupId,
                     GroupName = u.Group != null ? u.Group.Name : null,
