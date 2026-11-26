@@ -85,67 +85,89 @@ public class RecordingProcessingJob
                 }
             }
 
-            var recordedPlates = new List<RecordedPlate>(aiResult.Cars.Count);
-            var sequence = 0;
+            var strategy = _dbContext.Database.CreateExecutionStrategy();
+            var savedPlatesCount = 0;
+            var matchedPlatesCount = 0;
 
-            foreach (var car in aiResult.Cars)
+            await strategy.ExecuteAsync(async () =>
             {
-                if (string.IsNullOrWhiteSpace(car.PlateNumber)) continue;
+                _dbContext.ChangeTracker.Clear();
 
-                sequence++;
-                var normalized = PlateNormalizer.Normalize(car.PlateNumber);
-                var effectiveOffsetMs = Math.Max(0, car.TimestampMs);
-                var recordedAt = session.StartedAt.AddMilliseconds(effectiveOffsetMs);
-                var nearestLocation = FindNearestGpsPoint(gpsPoints, recordedAt);
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-                var isMatched = checkPlatesLookup.TryGetValue(normalized, out var matchedPlate);
+                // 1) مسح اللوحات القديمة بتاعة الـ Session الأول (يمنع التكرار من أي مصدر)
+                await _dbContext.RecordedPlates
+                    .Where(p => p.SessionId == sessionId)
+                    .ExecuteDeleteAsync(cancellationToken);
 
-                recordedPlates.Add(new RecordedPlate
+                // 2) تجهيز وإضافة اللوحات الجديدة
+                var recordedPlates = new List<RecordedPlate>(aiResult.Cars.Count);
+                var sequence = 0;
+
+                foreach (var car in aiResult.Cars)
                 {
-                    SessionId = sessionId,
-                    UserId = session.UserId,
-                    SequenceNumber = sequence,
-                    RawPlate = car.PlateNumber,
-                    NormalizedPlate = normalized,
-                    VehicleType = car.VehicleType,
-                    Notes = car.Notes,
-                    District = session.District,
-                    Street = session.Street,
-                    Location = nearestLocation,
-                    AudioOffsetMs = effectiveOffsetMs,
-                    IsMatched = isMatched,
-                    MatchedCheckPlateId = isMatched ? matchedPlate!.Id : null,
-                    IsManualEntry = false,
-                    RecordedAt = recordedAt,
-                    BankName = matchedPlate?.BankName,
-                    VehicleTypeInCheckFile = matchedPlate?.VehicleType
-                });
-            }
+                    if (string.IsNullOrWhiteSpace(car.PlateNumber)) continue;
 
-            // حفظ اللوحات الأول قبل تعليم الـ Session كـ Completed
-            await _dbContext.RecordedPlates.AddRangeAsync(recordedPlates, cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+                    sequence++;
+                    var normalized = PlateNormalizer.Normalize(car.PlateNumber);
+                    var effectiveOffsetMs = Math.Max(0, car.TimestampMs);
+                    var recordedAt = session.StartedAt.AddMilliseconds(effectiveOffsetMs);
+                    var nearestLocation = FindNearestGpsPoint(gpsPoints, recordedAt);
 
-            await _dbContext.RecordingSessions
-                .Where(s => s.Id == sessionId)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(s => s.TotalPlates, recordedPlates.Count)
-                    .SetProperty(s => s.TotalGpsPoints, gpsPoints.Count)
-                    .SetProperty(s => s.Status, SessionStatus.Completed)
-                    .SetProperty(s => s.EndedAt, DateTime.UtcNow)
-                    .SetProperty(s => s.ProcessingError, (string?)null),
-                    cancellationToken);
+                    var isMatched = checkPlatesLookup.TryGetValue(normalized, out var matchedPlate);
 
-            var recorderName = session.RecorderName;
-            var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
-                p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District, session.Street, p.Notes,
-                LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, recorderName, p.IsMatched)).ToList();
+                    recordedPlates.Add(new RecordedPlate
+                    {
+                        SessionId = sessionId,
+                        UserId = session.UserId,
+                        SequenceNumber = sequence,
+                        RawPlate = car.PlateNumber,
+                        NormalizedPlate = normalized,
+                        VehicleType = car.VehicleType,
+                        Notes = car.Notes,
+                        District = session.District,
+                        Street = session.Street,
+                        Location = nearestLocation,
+                        AudioOffsetMs = effectiveOffsetMs,
+                        IsMatched = isMatched,
+                        MatchedCheckPlateId = isMatched ? matchedPlate!.Id : null,
+                        IsManualEntry = false,
+                        RecordedAt = recordedAt,
+                        BankName = matchedPlate?.BankName,
+                        VehicleTypeInCheckFile = matchedPlate?.VehicleType
+                    });
+                }
 
-            await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);
+                await _dbContext.RecordedPlates.AddRangeAsync(recordedPlates, cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                // 3) تحديث حالة الـ Session (من غير ما نكتب فوق EndedAt لو كانت متسجلة قبل كده)
+                await _dbContext.RecordingSessions
+                    .Where(s => s.Id == sessionId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(s => s.TotalPlates, recordedPlates.Count)
+                        .SetProperty(s => s.TotalGpsPoints, gpsPoints.Count)
+                        .SetProperty(s => s.Status, SessionStatus.Completed)
+                        .SetProperty(s => s.EndedAt, s => s.EndedAt ?? DateTime.UtcNow)
+                        .SetProperty(s => s.ProcessingError, (string?)null),
+                        cancellationToken);
+
+                // 4) تحديث الأرشيف جوه نفس الـ Transaction
+                var archiveEntries = recordedPlates.Select(p => new RecordingArchiveEntryInput(
+                    p.RawPlate, p.NormalizedPlate, p.VehicleType, session.District, session.Street, p.Notes,
+                    LocationLinkHelper.ToGoogleMapsLink(p.Location), p.RecordedAt, session.RecorderName, p.IsMatched)).ToList();
+
+                await _archiveService.ReplaceSessionEntriesAsync(sessionId, session.UserId, archiveEntries, cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+
+                savedPlatesCount = recordedPlates.Count;
+                matchedPlatesCount = recordedPlates.Count(p => p.IsMatched);
+            });
 
             _logger.LogInformation(
                 "Recording processing completed for Session {SessionId}: {PlateCount} plates, {MatchedCount} matched",
-                sessionId, recordedPlates.Count, recordedPlates.Count(p => p.IsMatched));
+                sessionId, savedPlatesCount, matchedPlatesCount);
         }
         catch (Exception ex)
         {

@@ -187,21 +187,26 @@ public class RecordingSessionService : IRecordingSessionService
     public async Task<ApiResponse<bool>> RetryAsync(Guid sessionId, Guid currentUserId, CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.RecordingSessions
-            .FirstOrDefaultAsync(ScopeFilter(currentUserId, sessionId), cancellationToken);
+            .AsNoTracking()
+            .Where(ScopeFilter(currentUserId, sessionId))
+            .Select(s => new { s.AudioUrl })
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (session is null) return ApiResponse<bool>.Fail("التسجيل غير موجود.", null, 404);
         if (session.AudioUrl is null) return ApiResponse<bool>.Fail("مفيش صوت مرفوع أصلاً لإعادة المعالجة.", null, 400);
 
-        if (session.Status == SessionStatus.Processing)
+        // تحديث ذري يمنع تشغيل Job مرتين لو حصل Double-click
+        var updated = await _dbContext.RecordingSessions
+            .Where(s => s.Id == sessionId && s.UserId == currentUserId && s.Status != SessionStatus.Processing)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(s => s.Status, SessionStatus.Processing)
+                .SetProperty(s => s.ProcessingError, (string?)null),
+                cancellationToken);
+
+        if (updated == 0)
         {
             return ApiResponse<bool>.Fail("التسجيل لسه بيتعالج دلوقتي.", null, 409);
         }
-
-        await _dbContext.RecordedPlates.Where(p => p.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken);
-
-        session.Status = SessionStatus.Processing;
-        session.ProcessingError = null;
-        await _unit.CompleteAsync();
 
         _backgroundJobClient.Enqueue<RecordingProcessingJob>(job => job.ProcessAsync(sessionId, CancellationToken.None));
 
