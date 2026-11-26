@@ -205,6 +205,9 @@ Maintain an `active_zone_note` state chronologically as you listen:
                 }
 
                 var parsed = ParseGeminiResponse(responseJson);
+                _logger.LogInformation(
+    "Gemini ({Model}) attempt {Attempt} raw JSON for {FileName}: {Payload}",
+    _model, attempt, fileName, parsed.TextPayload);
 
                 AiRawResponse? raw;
                 try
